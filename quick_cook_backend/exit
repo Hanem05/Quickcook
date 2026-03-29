@@ -1,0 +1,26 @@
+[90m= [39m[34;4mIlluminate\Database\Eloquent\Collection[39;24m {#5803
+    [34mall[39m: [
+      [34;4mApp\Models\Recipe[39;24m {#6067
+        [34mid[39m: [35m1[39m,
+        [34mname[39m: "[32mSimple Omelette[39m",
+        [34minstructions[39m: "[32mBeat eggs. Heat oil in pan. Add eggs and cook for 3-5 minutes.[39m",
+        [34mcreated_at[39m: "[32m2026-03-01 15:28:43[39m",
+        [34mupdated_at[39m: "[32m2026-03-01 15:28:43[39m",
+      },
+      [34;4mApp\Models\Recipe[39;24m {#6068
+        [34mid[39m: [35m2[39m,
+        [34mname[39m: "[32mChicken Fried Rice[39m",
+        [34minstructions[39m: "[32mCook rice. Sauté garlic, onion, and chicken. Add rice and soy sauce. Mix well.[39m",
+        [34mcreated_at[39m: "[32m2026-03-01 15:28:43[39m",
+        [34mupdated_at[39m: "[32m2026-03-01 15:28:43[39m",
+      },
+      [34;4mApp\Models\Recipe[39;24m {#6069
+        [34mid[39m: [35m3[39m,
+        [34mname[39m: "[32mBasic Pancake[39m",
+        [34minstructions[39m: "[32mMix flour, milk, sugar, and egg. Cook on pan until golden brown.[39m",
+        [34mcreated_at[39m: "[32m2026-03-01 15:28:43[39m",
+        [34mupdated_at[39m: "[32m2026-03-01 15:28:43[39m",
+      },
+    ],
+  }
+

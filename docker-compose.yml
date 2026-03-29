@@ -1,0 +1,48 @@
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quickcook_app
+    working_dir: /var/www
+    volumes:
+      - ./quick_cook_backend:/var/www
+    depends_on:
+      - db
+      - redis   # 👈 ADD THIS
+
+  nginx:
+    image: nginx:alpine
+    container_name: quickcook_nginx
+    ports:
+      - "8000:80"
+    volumes:
+      - ./quick_cook_backend:/var/www
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+
+  db:
+    image: mysql:8
+    container_name: quickcook_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: quickcook
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_PASSWORD: root
+      MYSQL_USER: quickcook
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  # 🔥 ADD THIS BLOCK
+  redis:
+    image: redis:alpine
+    container_name: quickcook_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  mysql_data:
