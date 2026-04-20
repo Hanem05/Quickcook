@@ -7,6 +7,16 @@ class Recipe {
   final String? category;
   final double? rating;
 
+  /// Ingredient match flow (match-recipes API).
+  final double? matchCoveragePct;
+  final int? missingIngredientsApprox;
+
+  /// Detail / success prediction (show API).
+  final int? successScore;
+  final String? successLabel;
+  final String? difficulty;
+  final int? cookingTimeMinutes;
+
   Recipe({
     required this.id,
     required this.name,
@@ -15,6 +25,12 @@ class Recipe {
     this.imageUrl,
     this.category,
     this.rating,
+    this.matchCoveragePct,
+    this.missingIngredientsApprox,
+    this.successScore,
+    this.successLabel,
+    this.difficulty,
+    this.cookingTimeMinutes,
   });
 
   factory Recipe.fromJson(Map<String, dynamic> json) {
@@ -22,7 +38,6 @@ class Recipe {
 
     if (json['ingredients'] != null) {
       ingredientNames = (json['ingredients'] as List).map((ingredient) {
-        // Safely handle both Object and String returns
         if (ingredient is Map) {
           return ingredient['name']?.toString() ?? 'Unknown Ingredient';
         }
@@ -30,27 +45,53 @@ class Recipe {
       }).toList();
     }
 
-    // Safely parse the ID just in case caching turned it into a String
     int parsedId = json['id'] is int
-        ? json['id']
+        ? json['id'] as int
         : int.tryParse(json['id']?.toString() ?? '0') ?? 0;
 
-    // Temporary debug print - check your console for this!
-    print("DEBUG JSON for ${json['name']}: ${json['instructions']}");
+    final cov = json['match_coverage_pct'];
+    final miss = json['missing_ingredients'];
 
     return Recipe(
       id: parsedId,
       name: json['name']?.toString() ?? 'Unknown Recipe',
-      // Check if your API uses 'instructions' or 'description'
       instructions:
           json['instructions']?.toString() ?? 'No instructions provided.',
       ingredients: ingredientNames,
-      // FIX: Match the key to what you have in Laravel (likely 'image')
       imageUrl: json['image']?.toString() ?? json['image_url']?.toString(),
       category: json['category']?.toString(),
       rating: json['average_rating'] != null
           ? double.tryParse(json['average_rating'].toString())
           : null,
+      matchCoveragePct: cov != null ? double.tryParse(cov.toString()) : null,
+      missingIngredientsApprox:
+          miss is int ? miss : int.tryParse(miss?.toString() ?? ''),
+      successScore: json['success_score'] != null
+          ? int.tryParse(json['success_score'].toString())
+          : null,
+      successLabel: json['success_label']?.toString(),
+      difficulty: json['difficulty']?.toString(),
+      cookingTimeMinutes: json['cooking_time'] != null
+          ? int.tryParse(json['cooking_time'].toString())
+          : null,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'instructions': instructions,
+        'ingredients': ingredients,
+        'image_url': imageUrl,
+        'category': category,
+        'average_rating': rating,
+        if (matchCoveragePct != null)
+          'match_coverage_pct': matchCoveragePct,
+        if (missingIngredientsApprox != null)
+          'missing_ingredients': missingIngredientsApprox,
+        if (successScore != null) 'success_score': successScore,
+        if (successLabel != null) 'success_label': successLabel,
+        if (difficulty != null) 'difficulty': difficulty,
+        if (cookingTimeMinutes != null) 'cooking_time': cookingTimeMinutes,
+      };
 }

@@ -15,6 +15,22 @@ class ApiService {
   static String? token;
 
   static final Map<String, dynamic> _cache = {};
+
+  static String? _readErrorMessage(String body) {
+    try {
+      final data = jsonDecode(body);
+      if (data is Map<String, dynamic>) {
+        if (data['message'] != null) return data['message'].toString();
+        final errs = data['errors'];
+        if (errs is Map && errs.isNotEmpty) {
+          final first = errs.values.first;
+          if (first is List && first.isNotEmpty) return first.first.toString();
+          return first.toString();
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
   /// Production: `flutter build apk --dart-define=API_BASE_URL=https://your-host/api`
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
@@ -198,11 +214,48 @@ class ApiService {
       headers: await _getHeaders(),
       body: jsonEncode(body),
     );
-    if (response.statusCode != 200) throw Exception("Failed to fetch recipes");
-    final json = jsonDecode(response.body);
+    if (response.statusCode != 200) {
+      throw Exception(
+        _readErrorMessage(response.body) ?? 'Could not load matching recipes.',
+      );
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
     final List data = json["data"] ?? [];
     final recipes = data.map<Recipe>((e) => Recipe.fromJson(e)).toList();
-    return {"recipes": recipes, "hasMore": json["next_page_url"] != null};
+    int? pageNum(dynamic v) {
+      if (v == null) return null;
+      if (v is int) return v;
+      return int.tryParse(v.toString());
+    }
+
+    final cp = pageNum(json['current_page']);
+    final lp = pageNum(json['last_page']);
+    final hasMore = cp != null && lp != null
+        ? cp < lp
+        : json['next_page_url'] != null;
+    return {
+      "recipes": recipes,
+      "hasMore": hasMore,
+      if (json['meta'] != null) "meta": json['meta'],
+    };
+  }
+
+  /// Sprint 8 — boosts recommendation ranking from real usage (click / save).
+  static Future<void> postRecommendationFeedback(
+    int recipeId,
+    String signal,
+  ) async {
+    assert(signal == 'click' || signal == 'save');
+    final response = await http.post(
+      Uri.parse('$baseUrl/recommendation-feedback'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'recipe_id': recipeId, 'signal': signal}),
+    );
+    if (response.statusCode != 200) {
+      debugPrint(
+        'recommendation-feedback failed: ${response.statusCode} ${response.body}',
+      );
+    }
   }
 
   static Future<Recipe> fetchRecipeDetail(int id) async {
@@ -259,9 +312,13 @@ class ApiService {
     final response = await http.post(
       Uri.parse("$baseUrl/favorites"),
       headers: await _getHeaders(),
-      body: jsonEncode({"recipe_id": recipeId.toString()}),
+      body: jsonEncode({"recipe_id": recipeId}),
     );
-    if (response.statusCode != 200) throw Exception("Failed to add favorite");
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception(
+        _readErrorMessage(response.body) ?? 'Failed to add favorite',
+      );
+    }
   }
 
   static Future<void> removeFavorite(int recipeId) async {
@@ -790,15 +847,27 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> globalSearch(String query) async {
-    final response = await http.get(Uri.parse("$baseUrl/search?query=$query"));
-
-    print("STATUS: ${response.statusCode}");
-    print("BODY: ${response.body}");
-
-    if (response.statusCode == 200) {
-      return json.decode(response.body);
-    } else {
-      throw Exception("Search failed");
+    final uri = Uri.parse(
+      '$baseUrl/search?query=${Uri.encodeQueryComponent(query)}',
+    );
+    final sw = Stopwatch()..start();
+    try {
+      final response = await http.get(
+        uri,
+        headers: const {'Accept': 'application/json'},
+      );
+      if (response.statusCode == 200) {
+        return json.decode(response.body) as Map<String, dynamic>;
+      }
+      throw Exception(
+        _readErrorMessage(response.body) ?? 'Search could not be completed.',
+      );
+    } finally {
+      sw.stop();
+      await PerformanceReporter.onApiCall(
+        'GET /search',
+        sw.elapsedMilliseconds,
+      );
     }
   }
 
@@ -807,16 +876,10 @@ class ApiService {
     // 1. Get the real headers that include the token from memory
     final headers = await _getHeaders();
 
-    // 2. Debug: This will show you if the token actually exists
-    print("DEBUG TOKEN: ${headers['Authorization']}");
-
     final response = await http.get(
       Uri.parse("$baseUrl/collections"),
       headers: headers, // ✅ Use the full headers here
     );
-
-    print("COLLECTIONS STATUS: ${response.statusCode}");
-    print("BODY: ${utf8.decode(response.bodyBytes)}");
 
     if (response.statusCode == 200) {
       return json.decode(utf8.decode(response.bodyBytes));
@@ -835,8 +898,9 @@ class ApiService {
     // If the server returns 401 or 500, we need to throw an error
     // so the UI knows something went wrong.
     if (response.statusCode != 200 && response.statusCode != 201) {
-      print("CREATE ERROR: ${response.body}");
-      throw Exception("Failed to create collection");
+      throw Exception(
+        _readErrorMessage(response.body) ?? 'Failed to create collection',
+      );
     }
   }
 

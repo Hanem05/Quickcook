@@ -424,6 +424,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                                   "view_recipe",
                                   recipe.id,
                                 );
+                                if (!context.mounted) return;
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -505,6 +506,18 @@ class _RecipeScreenState extends State<RecipeScreen> {
 
                                           const SizedBox(height: 12),
                                           ratingStars(recipe.rating),
+                                          if (recipe.matchCoveragePct !=
+                                              null) ...[
+                                            const SizedBox(height: 10),
+                                            Text(
+                                              '${recipe.matchCoveragePct!.toStringAsFixed(0)}% pantry match · ~${recipe.missingIngredientsApprox ?? '?'} ingredient gaps',
+                                              style: const TextStyle(
+                                                color: primaryBrand,
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 13,
+                                              ),
+                                            ),
+                                          ],
                                           const SizedBox(height: 24),
 
                                           // Ingredients snippet
@@ -587,17 +600,24 @@ class _RecipeScreenState extends State<RecipeScreen> {
                                                       await ApiService.addToFavorites(
                                                         recipe.id,
                                                       );
+                                                      await ApiService
+                                                          .postRecommendationFeedback(
+                                                        recipe.id,
+                                                        'save',
+                                                      );
                                                       await ApiService.logActivity(
                                                         "favorite_recipe",
                                                         recipe.id,
                                                       );
 
+                                                      if (!mounted) return;
                                                       setState(() {
                                                         savedRecipes.add(
                                                           recipe.id,
                                                         );
                                                       });
 
+                                                      if (!context.mounted) return;
                                                       ScaffoldMessenger.of(
                                                         context,
                                                       ).showSnackBar(

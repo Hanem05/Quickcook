@@ -373,4 +373,60 @@ class AdminController extends Controller
             'data' => $data
         ]);
     }
+
+    /**
+     * Sprint 8 Task 85 — duplicate names, missing ingredients, thin instructions.
+     */
+    public function recipeDataQuality()
+    {
+        $duplicateNames = Recipe::query()
+            ->select('name', DB::raw('COUNT(*) as count'))
+            ->groupBy('name')
+            ->havingRaw('COUNT(*) > 1')
+            ->orderByDesc('count')
+            ->get();
+
+        $withoutIngredients = Recipe::query()
+            ->doesntHave('ingredients')
+            ->get(['id', 'name', 'category']);
+
+        $shortInstructions = Recipe::query()
+            ->whereRaw('CHAR_LENGTH(TRIM(instructions)) < 15')
+            ->get(['id', 'name']);
+
+        return response()->json([
+            'success' => true,
+            'duplicate_names' => $duplicateNames,
+            'recipes_without_ingredients' => $withoutIngredients,
+            'very_short_instructions' => $shortInstructions,
+        ]);
+    }
+
+    /**
+     * Sprint 8 Task 87 — aggregate slow client-reported calls (uses existing performance_metrics).
+     */
+    public function performanceBottlenecks(Request $request)
+    {
+        $threshold = min(600000, max(100, (int) $request->get('threshold_ms', 1500)));
+
+        $rows = DB::table('performance_metrics')
+            ->select(
+                'kind',
+                'name',
+                DB::raw('AVG(duration_ms) as avg_ms'),
+                DB::raw('MAX(duration_ms) as max_ms'),
+                DB::raw('COUNT(*) as samples')
+            )
+            ->where('duration_ms', '>=', $threshold)
+            ->groupBy('kind', 'name')
+            ->orderByDesc('avg_ms')
+            ->limit(40)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'threshold_ms' => $threshold,
+            'data' => $rows,
+        ]);
+    }
 }

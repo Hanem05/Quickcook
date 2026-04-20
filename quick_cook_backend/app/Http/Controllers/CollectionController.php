@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Models\Collection;
 
 class CollectionController extends Controller
 {
@@ -12,7 +11,7 @@ class CollectionController extends Controller
     {
         $user = Auth::user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
@@ -25,48 +24,67 @@ class CollectionController extends Controller
     {
         $user = Auth::user();
 
-        // Safety check to prevent 500 error
-        if (!$user) {
+        if (! $user) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
-        return $user->collections()->create([
-            'name' => $request->name
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
         ]);
+
+        $name = trim($validated['name']);
+        if ($name === '') {
+            return response()->json(['message' => 'Folder name cannot be empty.'], 422);
+        }
+
+        $normalized = mb_strtolower($name);
+        $duplicate = $user->collections()
+            ->whereRaw('LOWER(TRIM(name)) = ?', [$normalized])
+            ->exists();
+
+        if ($duplicate) {
+            return response()->json([
+                'message' => 'You already have a folder with this name.',
+            ], 422);
+        }
+
+        return response()->json(
+            $user->collections()->create(['name' => $name]),
+            201
+        );
     }
 
     public function addRecipe(Request $request)
     {
         $user = Auth::user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
         $request->validate([
             'collection_id' => 'required|integer',
-            'recipe_id' => 'required|integer',
+            'recipe_id' => 'required|integer|exists:recipes,id',
         ]);
 
         $collection = $user->collections()
             ->find($request->collection_id);
 
-        if (!$collection) {
+        if (! $collection) {
             return response()->json(['error' => 'Collection not found'], 404);
         }
 
         $collection->recipes()->syncWithoutDetaching([
-            $request->recipe_id
+            (int) $request->recipe_id,
         ]);
 
         return response()->json([
-            'message' => 'Recipe added successfully'
+            'message' => 'Recipe added successfully',
         ]);
     }
 
     public function show($id)
     {
-        // Gets the collection AND all recipes linked to it
         return Auth::user()->collections()->with('recipes')->findOrFail($id);
     }
 }

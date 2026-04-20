@@ -127,9 +127,48 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: bgSoft,
-        body: Center(child: CircularProgressIndicator(color: primaryBrand)),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    height: 220,
+                    decoration: BoxDecoration(
+                      color: borderLight,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    height: 28,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: borderLight,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    height: 18,
+                    width: 180,
+                    decoration: BoxDecoration(
+                      color: borderLight.withOpacity(0.85),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  const CircularProgressIndicator(color: primaryBrand),
+                ],
+              ),
+            ),
+          ),
+        ),
       );
     }
 
@@ -196,6 +235,10 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _buildMetaDataRow(),
+                          if (recipe!.successScore != null) ...[
+                            const SizedBox(height: 16),
+                            _buildSuccessOutlook(),
+                          ],
                           const SizedBox(height: 16),
                           Text(
                             recipe!.name,
@@ -281,6 +324,88 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
               size: 80,
               color: textMuted,
             ),
+    );
+  }
+
+  Widget _buildSuccessOutlook() {
+    final score = recipe!.successScore!;
+    final label = recipe!.successLabel ?? '';
+    final diff = recipe!.difficulty;
+    final mins = recipe!.cookingTimeMinutes;
+
+    final friendly = label.toLowerCase().contains('beginner');
+    final challenging = label.toLowerCase().contains('challeng');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      decoration: BoxDecoration(
+        color: surfaceWhite,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderLight),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.insights_rounded,
+            color: friendly
+                ? primaryBrand
+                : challenging
+                    ? warningAmber
+                    : textMuted,
+            size: 26,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'SUCCESS OUTLOOK',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: textMuted,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  label.isNotEmpty ? label : 'Estimated fit',
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    color: textMain,
+                  ),
+                ),
+                if (diff != null || mins != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    [
+                      if (diff != null) diff,
+                      if (mins != null) '~$mins min',
+                    ].join(' · '),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: textMuted,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Text(
+            '$score%',
+            style: const TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              color: primaryBrand,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

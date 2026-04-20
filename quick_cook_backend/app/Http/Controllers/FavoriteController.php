@@ -9,19 +9,42 @@ class FavoriteController extends Controller
 {
     public function store(Request $request)
     {
-        $request->validate([
-            'recipe_id' => 'required|exists:recipes,id',
+        $request->merge([
+            'recipe_id' => is_numeric($request->input('recipe_id'))
+                ? (int) $request->input('recipe_id')
+                : $request->input('recipe_id'),
         ]);
 
-        $favorite = Favorite::firstOrCreate([
-            'user_id' => $request->user()->id,
-            'recipe_id' => $request->recipe_id,
+        $request->validate([
+            'recipe_id' => 'required|integer|exists:recipes,id',
+        ]);
+
+        $uid = $request->user()->id;
+        $rid = (int) $request->recipe_id;
+
+        $existing = Favorite::query()
+            ->where('user_id', $uid)
+            ->where('recipe_id', $rid)
+            ->first();
+
+        if ($existing !== null) {
+            return response()->json([
+                'message' => 'Already in favorites',
+                'favorite' => $existing,
+                'duplicate' => true,
+            ], 200);
+        }
+
+        $favorite = Favorite::create([
+            'user_id' => $uid,
+            'recipe_id' => $rid,
         ]);
 
         return response()->json([
             'message' => 'Recipe added to favorites',
-            'favorite' => $favorite
-        ]);
+            'favorite' => $favorite,
+            'duplicate' => false,
+        ], 201);
     }
 
     public function index(Request $request)

@@ -199,8 +199,75 @@ class _HomeScreenState extends State<HomeScreen> {
         isSearching = true;
       });
     } catch (e) {
-      debugPrint("Search error: $e");
+      if (!mounted) return;
+      final msg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      _showSnackBar(msg.isEmpty ? 'Search failed.' : msg, isError: true);
     }
+  }
+
+  Future<void> _showMatchEmptyState(dynamic meta) async {
+    String? message;
+    List<dynamic>? suggestions;
+    if (meta is Map) {
+      message = meta['message']?.toString();
+      final raw = meta['suggestions'];
+      if (raw is List<dynamic>) suggestions = raw;
+    }
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('No close matches'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message ??
+                      'Try different ingredients or a broader category filter.',
+                ),
+                if (suggestions != null && suggestions.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Popular picks to try',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 8),
+                  ...suggestions.map((item) {
+                    final m = item is Map
+                        ? Map<String, dynamic>.from(item)
+                        : <String, dynamic>{};
+                    final idRaw = m['id'];
+                    final id = idRaw is int
+                        ? idRaw
+                        : int.tryParse(idRaw?.toString() ?? '') ?? 0;
+                    final name = m['name']?.toString() ?? 'Recipe';
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(name),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        if (id > 0) navigateToDetail(id);
+                      },
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> findRecipes() async {
@@ -212,15 +279,18 @@ class _HomeScreenState extends State<HomeScreen> {
         1,
         null,
       );
-      final List<Recipe> recipesList = result["recipes"] ?? [];
+      final List<Recipe> recipesList =
+          List<Recipe>.from(result["recipes"] ?? const <Recipe>[]);
+      final meta = result['meta'];
       if (!mounted) return;
       setState(() => isLoadingRecipes = false);
 
       if (recipesList.isEmpty) {
-        _showSnackBar("No matching recipes found.", isError: true);
+        await _showMatchEmptyState(meta);
         return;
       }
 
+      if (!context.mounted) return;
       await Navigator.push(
         context,
         MaterialPageRoute(
@@ -232,7 +302,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } catch (e) {
       if (mounted) setState(() => isLoadingRecipes = false);
-      _showSnackBar("Error connecting to server.", isError: true);
+      final msg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      _showSnackBar(
+        msg.isEmpty ? 'Could not load matching recipes.' : msg,
+        isError: true,
+      );
     }
   }
 
@@ -293,7 +367,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.logout_rounded, color: Colors.redAccent),
             onPressed: () async {
               await ApiService.logout();
-              if (!mounted) return;
+              if (!context.mounted) return;
               Navigator.of(context).pushAndRemoveUntil(
                 MaterialPageRoute(builder: (_) => const LoginScreen()),
                 (route) => false,
@@ -506,9 +580,50 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 16),
         if (isLoadingRecommendations)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 40),
-            child: Center(
-              child: CircularProgressIndicator(color: cs.primary),
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+            child: Row(
+              children: List.generate(3, (i) {
+                return Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      left: i == 0 ? 0 : 6,
+                      right: i == 2 ? 0 : 6,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        AspectRatio(
+                          aspectRatio: 16 / 11,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: cs.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: cs.outlineVariant),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          height: 12,
+                          width: 72,
+                          decoration: BoxDecoration(
+                            color: cs.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
             ),
           )
         else if (recommendedRecipes.isEmpty)
@@ -528,21 +643,33 @@ class _HomeScreenState extends State<HomeScreen> {
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
               itemCount: recommendedRecipes.length,
-              itemBuilder: (context, index) => _buildRecipeCard(
-                recommendedRecipes[index],
-                index,
-                recommendedRecipes.length,
-              ),
+              itemBuilder: (context, index) {
+                final r = recommendedRecipes[index];
+                return _buildRecipeCard(
+                  r,
+                  index,
+                  recommendedRecipes.length,
+                  onRecipeTap: () {
+                    ApiService.postRecommendationFeedback(r.id, 'click');
+                    navigateToDetail(r.id);
+                  },
+                );
+              },
             ),
           ),
       ],
     );
   }
 
-  Widget _buildRecipeCard(Recipe recipe, int index, int total) {
+  Widget _buildRecipeCard(
+    Recipe recipe,
+    int index,
+    int total, {
+    VoidCallback? onRecipeTap,
+  }) {
     final cs = Theme.of(context).colorScheme;
     return GestureDetector(
-      onTap: () => navigateToDetail(recipe.id),
+      onTap: onRecipeTap ?? () => navigateToDetail(recipe.id),
       child: Container(
         width: 180,
         margin: EdgeInsets.only(

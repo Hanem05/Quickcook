@@ -53,6 +53,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/activities', [ActivityController::class, 'index']);
 
     Route::get('/recommended-recipes', [RecipeController::class, 'recommend']);
+    Route::post('/recommendation-feedback', [RecipeController::class, 'recommendationFeedback']);
 
     Route::get('/user/profile', [UserController::class, 'profile']);
     Route::put('/user/profile', [UserController::class, 'updateProfile']);
@@ -96,4 +97,6 @@ Route::middleware(['auth:sanctum', 'admin'])->group(function () {
     Route::get('/admin/ping', [AdminController::class, 'pingSystem']);
     Route::get('/admin/activity-logs', [AdminController::class, 'getActivityLogs']);
     Route::get('/admin/performance-metrics', [AdminController::class, 'performanceMetrics']);
+    Route::get('/admin/recipe-data-quality', [AdminController::class, 'recipeDataQuality']);
+    Route::get('/admin/performance-bottlenecks', [AdminController::class, 'performanceBottlenecks']);
 });
