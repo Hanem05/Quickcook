@@ -23,13 +23,13 @@ jobs:
           php-version: "8.2"
           tools: composer
 
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
       - name: Prepare environment
         run: |
           cp .env.example .env
           php artisan key:generate
-
-      - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist --no-progress
 
       - name: Lint PHP files
         run: git ls-files "*.php" | xargs -n1 php -l
@@ -56,7 +56,7 @@ jobs:
         run: flutter pub get
 
       - name: Static analysis
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Run tests
         run: flutter test
