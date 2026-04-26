@@ -11,8 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('collections', 'name')) {
+            return;
+        }
+
         Schema::table('collections', function (Blueprint $table) {
-            // Adds the name column (string) before the user_id
             $table->string('name')->after('id');
         });
     }
@@ -22,6 +25,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasColumn('collections', 'name')) {
+            return;
+        }
+
         Schema::table('collections', function (Blueprint $table) {
             $table->dropColumn('name');
         });

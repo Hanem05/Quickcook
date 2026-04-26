@@ -9,12 +9,23 @@ return new class extends Migration
 {
     protected function hasIndex(string $table, string $index): bool
     {
+        $driver = DB::getDriverName();
+        if ($driver === 'sqlite') {
+            $rows = DB::select("PRAGMA index_list('$table')");
+            foreach ($rows as $row) {
+                $name = is_array($row) ? ($row['name'] ?? null) : ($row->name ?? null);
+                if ($name === $index) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         $db = DB::getDatabaseName();
         $rows = DB::select(
             'SELECT 1 FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ? LIMIT 1',
             [$db, $table, $index]
         );
-
         return $rows !== [];
     }
 

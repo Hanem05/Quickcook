@@ -11,9 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('user_activities', 'ingredient_id')) {
+            return;
+        }
+
         Schema::table('user_activities', function (Blueprint $table) {
             $table->foreignId('ingredient_id')->nullable()->constrained()->onDelete('cascade');
-            //
         });
     }
 
@@ -22,8 +25,12 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasColumn('user_activities', 'ingredient_id')) {
+            return;
+        }
+
         Schema::table('user_activities', function (Blueprint $table) {
-            //
+            $table->dropConstrainedForeignId('ingredient_id');
         });
     }
 };

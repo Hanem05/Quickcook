@@ -11,8 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('collections', 'user_id')) {
+            return;
+        }
+
         Schema::table('collections', function (Blueprint $table) {
-            // This adds the column and links it to your users table
             $table->foreignId('user_id')->after('id')->constrained()->onDelete('cascade');
         });
     }
@@ -22,6 +25,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (!Schema::hasColumn('collections', 'user_id')) {
+            return;
+        }
+
         Schema::table('collections', function (Blueprint $table) {
             $table->dropForeign(['user_id']);
             $table->dropColumn('user_id');
