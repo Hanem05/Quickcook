@@ -35,11 +35,32 @@ class Recipe extends Model
 
     public function getImageUrlAttribute()
     {
-        if (!$this->image) {
+        if (! $this->image) {
             return null;
         }
 
-        return asset('storage/' . $this->image);
+        return static::publicImageUrl($this->image);
+    }
+
+    public static function publicImageUrl(?string $path): ?string
+    {
+        if ($path === null || trim($path) === '') {
+            return null;
+        }
+
+        $raw = ltrim($path, '/');
+        $encoded = implode('/', array_map('rawurlencode', explode('/', $raw)));
+        $cdnBase = rtrim((string) env('APP_CDN_URL', ''), '/');
+        if ($cdnBase !== '') {
+            return $cdnBase.'/'.$encoded;
+        }
+
+        $publicBase = rtrim((string) env('APP_STORAGE_PUBLIC_BASE_URL', ''), '/');
+        if ($publicBase !== '') {
+            return $publicBase.'/storage/'.$encoded;
+        }
+
+        return asset('storage/'.$encoded);
     }
 
     public function ratings()

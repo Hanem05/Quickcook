@@ -4,8 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\Ingredient;
 use App\Models\Recipe;
+use App\Models\SearchHistory;
 use App\Models\UserActivity;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class SearchController extends Controller
@@ -23,6 +26,16 @@ class SearchController extends Controller
                 'ingredients' => [],
                 'categories' => [],
             ]);
+        }
+
+        if (Auth::check()) {
+            $history = SearchHistory::query()->firstOrNew([
+                'user_id' => Auth::id(),
+                'query' => mb_strtolower($query),
+            ]);
+            $history->hits = ((int) $history->hits) + 1;
+            $history->last_searched_at = now();
+            $history->save();
         }
 
         $like = '%'.$query.'%';
@@ -101,6 +114,81 @@ class SearchController extends Controller
             'recipes' => $scored,
             'ingredients' => $ingredients,
             'categories' => $categories,
+        ]);
+    }
+
+    public function suggestions(Request $request)
+    {
+        $q = trim((string) $request->query('query', ''));
+        $like = $q === '' ? null : '%'.$q.'%';
+
+        $trending = Cache::remember(
+            'search_suggestions_trending_'.($q === '' ? 'all' : md5($q)),
+            120,
+            function () use ($like) {
+                $rq = Recipe::query()->select('name')->whereNotNull('name');
+                if ($like) {
+                    $rq->where('name', 'LIKE', $like);
+                }
+
+                return $rq->orderBy('name')->limit(8)->pluck('name')->values()->all();
+            }
+        );
+
+        $categories = Recipe::query()
+            ->whereNotNull('category')
+            ->when($like, fn ($qq) => $qq->where('category', 'LIKE', $like))
+            ->select('category')
+            ->distinct()
+            ->limit(6)
+            ->pluck('category')
+            ->values()
+            ->all();
+
+        $recent = [];
+        if (Auth::check()) {
+            $recent = SearchHistory::query()
+                ->where('user_id', Auth::id())
+                ->when($like, fn ($qq) => $qq->where('query', 'LIKE', $like))
+                ->orderByDesc('last_searched_at')
+                ->limit(8)
+                ->pluck('query')
+                ->values()
+                ->all();
+        }
+
+        return response()->json([
+            'recent' => $recent,
+            'suggested_keywords' => array_values(array_unique(array_merge($categories, $trending))),
+        ]);
+    }
+
+    public function history()
+    {
+        $rows = SearchHistory::query()
+            ->where('user_id', Auth::id())
+            ->orderByDesc('last_searched_at')
+            ->limit(25)
+            ->get(['query', 'hits', 'last_searched_at']);
+
+        return response()->json(['data' => $rows]);
+    }
+
+    public function clearHistory()
+    {
+        SearchHistory::query()->where('user_id', Auth::id())->delete();
+
+        return response()->json(['success' => true]);
+    }
+
+    public function appVersion()
+    {
+        return response()->json([
+            'latest_version' => env('APP_CLIENT_LATEST_VERSION', '1.0.0'),
+            'minimum_supported_version' => env('APP_CLIENT_MIN_VERSION', '1.0.0'),
+            'force_update' => filter_var(env('APP_CLIENT_FORCE_UPDATE', false), FILTER_VALIDATE_BOOL),
+            'store_url' => env('APP_CLIENT_STORE_URL', ''),
+            'message' => 'A new app version is available.',
         ]);
     }
 }

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ThemeNotifier extends ChangeNotifier {
-  ThemeMode _mode = ThemeMode.system;
+  ThemeMode _mode = ThemeMode.light;
 
   ThemeMode get mode => _mode;
 
@@ -11,10 +11,10 @@ class ThemeNotifier extends ChangeNotifier {
     final s = p.getString('theme_mode')?.trim().toLowerCase();
     if (s == 'dark') {
       _mode = ThemeMode.dark;
-    } else if (s == 'light') {
-      _mode = ThemeMode.light;
-    } else {
+    } else if (s == 'system') {
       _mode = ThemeMode.system;
+    } else {
+      _mode = ThemeMode.light;
     }
     notifyListeners();
   }

@@ -18,7 +18,8 @@ class AdminController extends Controller
     public function stats()
     {
         try {
-            $data = Cache::remember('admin_stats', 300, function () {
+            $version = (int) Cache::get('recipes_cache_version', 1);
+            $data = Cache::remember('admin_stats:v'.$version, 300, function () {
                 $totalUsers = User::count();
                 $totalRecipes = Recipe::count();
                 $categoryStats = Recipe::select('category', DB::raw('count(*) as count'))
@@ -47,7 +48,8 @@ class AdminController extends Controller
     public function popularRecipes()
     {
         try {
-            $popular = Cache::remember('popular_recipes', 300, function () {
+            $version = (int) Cache::get('trending_cache_version', 1);
+            $popular = Cache::remember('popular_recipes:v'.$version, 300, function () {
                 return UserActivity::select('recipe_id', DB::raw('count(*) as views'))
                     ->where('action', 'view_recipe')
                     ->groupBy('recipe_id')
@@ -359,7 +361,8 @@ class AdminController extends Controller
 
     public function apiUsage(Request $request)
     {
-        $data = \DB::table('api_logs')
+        $perPage = min((int) $request->get('per_page', 10), 100);
+        $rows = \DB::table('api_logs')
             ->select(
                 'endpoint',
                 \DB::raw('COUNT(*) as hits'),
@@ -367,10 +370,16 @@ class AdminController extends Controller
             )
             ->groupBy('endpoint')
             ->orderByDesc('hits')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
-            'data' => $data
+            'data' => $rows->items(),
+            'meta' => [
+                'current_page' => $rows->currentPage(),
+                'last_page' => $rows->lastPage(),
+                'per_page' => $rows->perPage(),
+                'total' => $rows->total(),
+            ],
         ]);
     }
 
@@ -426,6 +435,43 @@ class AdminController extends Controller
         return response()->json([
             'success' => true,
             'threshold_ms' => $threshold,
+            'data' => $rows,
+        ]);
+    }
+
+    public function topSearchedRecipes()
+    {
+        $rows = UserActivity::query()
+            ->with('recipe:id,name,category,image')
+            ->where('action', 'search_recipe')
+            ->whereNotNull('recipe_id')
+            ->selectRaw('recipe_id, COUNT(*) as searches')
+            ->groupBy('recipe_id')
+            ->orderByDesc('searches')
+            ->limit(10)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $rows,
+        ]);
+    }
+
+    public function userActivityTrends(Request $request)
+    {
+        $days = min(90, max(7, (int) $request->get('days', 14)));
+        $start = now()->subDays($days - 1)->startOfDay();
+
+        $rows = UserActivity::query()
+            ->where('created_at', '>=', $start)
+            ->selectRaw('DATE(created_at) as date, action, COUNT(*) as total')
+            ->groupByRaw('DATE(created_at), action')
+            ->orderBy('date')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'days' => $days,
             'data' => $rows,
         ]);
     }

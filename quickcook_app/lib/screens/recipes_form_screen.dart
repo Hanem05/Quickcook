@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import '../models/ingredient.dart';
 import '../models/recipe.dart';
 import '../services/api_service.dart';
 
@@ -17,16 +16,23 @@ class RecipeFormScreen extends StatefulWidget {
 class _RecipeFormScreenState extends State<RecipeFormScreen> {
   final TextEditingController nameController = TextEditingController();
   final TextEditingController instructionsController = TextEditingController();
+  final TextEditingController cookingTimeController = TextEditingController(
+    text: '30',
+  );
+  final TextEditingController ingredientInputController = TextEditingController();
 
   XFile? _pickedImage;
   Uint8List? _imageBytes;
   String? _existingImageUrl;
 
-  List<Ingredient> ingredients = [];
-  Set<int> selectedIngredients = {};
+  List<String>? ingredientEntries;
 
   String selectedCategory = 'Breakfast';
+  String selectedDifficulty = 'medium';
   bool isLoading = false;
+  String? nameError;
+  String? instructionsError;
+  String? cookingTimeError;
 
   static const Color primaryBrand = Color(0xFF0D9488);
   static const Color darkSlate = Color(0xFF18181B);
@@ -49,16 +55,25 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
   @override
   void initState() {
     super.initState();
-    loadIngredients();
 
     if (widget.recipe != null) {
       nameController.text = widget.recipe!.name;
       instructionsController.text = widget.recipe!.instructions;
       _existingImageUrl = widget.recipe!.imageUrl;
+      ingredientEntries = widget.recipe!.ingredients
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList();
 
       if (categories.contains(widget.recipe!.category)) {
         selectedCategory = widget.recipe!.category!;
       }
+      selectedDifficulty = widget.recipe!.difficulty ?? 'medium';
+      cookingTimeController.text =
+          (widget.recipe!.cookingTimeMinutes ?? 30).toString();
+    } else {
+      ingredientEntries = <String>[];
     }
   }
 
@@ -66,33 +81,45 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
   void dispose() {
     nameController.dispose();
     instructionsController.dispose();
+    cookingTimeController.dispose();
+    ingredientInputController.dispose();
     super.dispose();
   }
 
-  Future<void> loadIngredients() async {
-    try {
-      final data = await ApiService.fetchIngredients();
-      if (!mounted) return;
-      setState(() {
-        ingredients = data;
-        if (widget.recipe != null) {
-          for (String recipeIngredientName in widget.recipe!.ingredients) {
-            try {
-              final matchedIngredient = ingredients.firstWhere(
-                (ing) => ing.name == recipeIngredientName,
-              );
-              selectedIngredients.add(matchedIngredient.id);
-            } catch (e) {
-              debugPrint(
-                "Could not find ID for ingredient: $recipeIngredientName",
-              );
-            }
-          }
-        }
-      });
-    } catch (e) {
-      _showSnackBar("Failed to load ingredients.", isError: true);
+  void _addIngredientEntry([String? value]) {
+    ingredientEntries ??= <String>[];
+    final raw = (value ?? ingredientInputController.text).trim();
+    if (raw.isEmpty) return;
+
+    final parts = raw
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return;
+
+    final existingLower = ingredientEntries!.map((e) => e.toLowerCase()).toSet();
+    bool addedAny = false;
+    for (final part in parts) {
+      final key = part.toLowerCase();
+      if (!existingLower.contains(key)) {
+        ingredientEntries!.add(part);
+        existingLower.add(key);
+        addedAny = true;
+      }
     }
+
+    ingredientInputController.clear();
+    if (addedAny) {
+      setState(() {});
+    }
+  }
+
+  void _removeIngredientEntry(String value) {
+    ingredientEntries ??= <String>[];
+    setState(() {
+      ingredientEntries!.remove(value);
+    });
   }
 
   Future<void> _pickImage() async {
@@ -119,12 +146,17 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
   }
 
   Future<void> saveRecipe() async {
-    if (nameController.text.isEmpty ||
-        instructionsController.text.isEmpty ||
-        selectedIngredients.isEmpty ||
+    _validateName(nameController.text);
+    _validateInstructions(instructionsController.text);
+    _validateCookingTime(cookingTimeController.text);
+
+    if (nameError != null ||
+        instructionsError != null ||
+        cookingTimeError != null ||
+        (ingredientEntries ?? const <String>[]).isEmpty ||
         (_existingImageUrl == null && _pickedImage == null)) {
       _showSnackBar(
-        "Please fill all fields, select ingredients, and upload an image",
+        "Please fix highlighted fields, add ingredients, and upload an image.",
         isError: true,
       );
       return;
@@ -138,7 +170,9 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
           name: nameController.text,
           category: selectedCategory,
           instructions: instructionsController.text,
-          ingredientIds: selectedIngredients.toList(),
+          ingredientNames: List<String>.from(ingredientEntries ?? const <String>[]),
+          difficulty: selectedDifficulty,
+          cookingTime: int.tryParse(cookingTimeController.text) ?? 30,
           imageFile: _pickedImage,
         );
       } else {
@@ -147,7 +181,9 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
           name: nameController.text,
           category: selectedCategory,
           instructions: instructionsController.text,
-          ingredientIds: selectedIngredients.toList(),
+          ingredientNames: List<String>.from(ingredientEntries ?? const <String>[]),
+          difficulty: selectedDifficulty,
+          cookingTime: int.tryParse(cookingTimeController.text) ?? 30,
           imageFile: _pickedImage,
         );
       }
@@ -312,6 +348,8 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                         controller: nameController,
                         label: "Recipe Name",
                         icon: Icons.title_rounded,
+                        errorText: nameError,
+                        onChanged: _validateName,
                       ),
                       const SizedBox(height: 24),
 
@@ -347,6 +385,31 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                         onChanged: (val) =>
                             setState(() => selectedCategory = val!),
                       ),
+                      const SizedBox(height: 20),
+                      DropdownButtonFormField<String>(
+                        value: selectedDifficulty,
+                        dropdownColor: surfaceWhite,
+                        decoration: _inputDecoration(
+                          Icons.speed_rounded,
+                          "Difficulty",
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'easy', child: Text('Easy')),
+                          DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                          DropdownMenuItem(value: 'hard', child: Text('Hard')),
+                        ],
+                        onChanged: (val) =>
+                            setState(() => selectedDifficulty = val ?? 'medium'),
+                      ),
+                      const SizedBox(height: 20),
+                      _buildTextField(
+                        controller: cookingTimeController,
+                        label: "Cooking Time (minutes)",
+                        icon: Icons.timer_outlined,
+                        keyboardType: TextInputType.number,
+                        errorText: cookingTimeError,
+                        onChanged: _validateCookingTime,
+                      ),
 
                       const SizedBox(height: 40),
                       _buildSectionHeader("Cooking Instructions"),
@@ -356,6 +419,8 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                         label: "Step-by-Step Guide",
                         icon: Icons.description_outlined,
                         maxLines: 6,
+                        errorText: instructionsError,
+                        onChanged: _validateInstructions,
                       ),
                     ],
                   ),
@@ -372,21 +437,124 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildSectionHeader("Ingredients Selection"),
-                      const SizedBox(height: 24),
-                      ingredients.isEmpty
-                          ? const Center(
-                              child: CircularProgressIndicator(
-                                color: primaryBrand,
+                      _buildSectionHeader("Ingredients Input"),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: bgSoft,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: borderLight),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.tips_and_updates_outlined, color: textMuted, size: 17),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                "Type ingredients then press Enter or Add. Existing names are reused automatically.",
+                                style: TextStyle(
+                                  color: textMuted,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w500,
+                                  height: 1.3,
+                                ),
                               ),
-                            )
-                          : Wrap(
-                              spacing: 8,
-                              runSpacing: 12,
-                              children: ingredients
-                                  .map((ing) => _buildIngredientChip(ing))
-                                  .toList(),
                             ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: bgSoft.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: borderLight),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: ingredientInputController,
+                                onSubmitted: (_) => _addIngredientEntry(),
+                                decoration: _inputDecoration(
+                                  Icons.kitchen_rounded,
+                                  "Enter ingredient (e.g. Garlic)",
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            SizedBox(
+                              height: 50,
+                              child: ElevatedButton.icon(
+                                onPressed: _addIngredientEntry,
+                                icon: const Icon(Icons.add_rounded, size: 17),
+                                label: const Text("Add"),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryBrand,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      if ((ingredientEntries ?? const <String>[]).isEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: bgSoft,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: borderLight),
+                          ),
+                          child: const Text(
+                            "No ingredients added yet.",
+                            style: TextStyle(
+                              color: textMuted,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: bgSoft.withOpacity(0.55),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: borderLight),
+                          ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 10,
+                            children: (ingredientEntries ?? const <String>[])
+                                .map(
+                                  (ing) => InputChip(
+                                    label: Text(
+                                      ing,
+                                      style: const TextStyle(
+                                        color: textMain,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    backgroundColor: surfaceWhite,
+                                    side: const BorderSide(color: borderLight),
+                                    onDeleted: () => _removeIngredientEntry(ing),
+                                    deleteIconColor: textMuted,
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -416,7 +584,7 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                           )
                         : Text(
                             widget.recipe == null
-                                ? "Publish to Library"
+                                ? "Add to Recipes"
                                 : "Commit Updates",
                             style: const TextStyle(
                               fontSize: 16,
@@ -457,41 +625,13 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
     );
   }
 
-  Widget _buildIngredientChip(Ingredient ingredient) {
-    final isSelected = selectedIngredients.contains(ingredient.id);
-    return FilterChip(
-      label: Text(ingredient.name),
-      selected: isSelected,
-      onSelected: (val) {
-        setState(() {
-          if (val) {
-            selectedIngredients.add(ingredient.id);
-          } else {
-            selectedIngredients.remove(ingredient.id);
-          }
-        });
-      },
-      selectedColor: primaryBrand.withOpacity(0.15),
-      checkmarkColor: primaryBrand,
-      labelStyle: TextStyle(
-        color: isSelected ? primaryBrand : textMain,
-        fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
-        fontSize: 13,
-      ),
-      backgroundColor: bgSoft,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: isSelected ? primaryBrand : Colors.transparent),
-      ),
-    );
-  }
-
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
     required IconData icon,
     int maxLines = 1,
+    TextInputType? keyboardType,
+    String? errorText,
     Function(String)? onChanged,
   }) {
     return Column(
@@ -509,19 +649,20 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
         TextField(
           controller: controller,
           maxLines: maxLines,
+          keyboardType: keyboardType,
           onChanged: onChanged,
           style: const TextStyle(
             fontWeight: FontWeight.w700,
             color: textMain,
             fontSize: 14,
           ),
-          decoration: _inputDecoration(icon, "Enter $label"),
+          decoration: _inputDecoration(icon, "Enter $label", errorText: errorText),
         ),
       ],
     );
   }
 
-  InputDecoration _inputDecoration(IconData icon, String hint) {
+  InputDecoration _inputDecoration(IconData icon, String hint, {String? errorText}) {
     return InputDecoration(
       prefixIcon: Icon(icon, color: textMuted, size: 20),
       filled: true,
@@ -540,6 +681,46 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: primaryBrand, width: 1.5),
       ),
+      errorText: errorText,
     );
+  }
+
+  void _validateName(String value) {
+    final v = value.trim();
+    setState(() {
+      if (v.isEmpty) {
+        nameError = 'Recipe name is required.';
+      } else if (v.length < 3) {
+        nameError = 'Recipe name must be at least 3 characters.';
+      } else {
+        nameError = null;
+      }
+    });
+  }
+
+  void _validateInstructions(String value) {
+    final v = value.trim();
+    setState(() {
+      if (v.isEmpty) {
+        instructionsError = 'Instructions are required.';
+      } else if (v.length < 20) {
+        instructionsError = 'Instructions are too short.';
+      } else {
+        instructionsError = null;
+      }
+    });
+  }
+
+  void _validateCookingTime(String value) {
+    final v = int.tryParse(value.trim());
+    setState(() {
+      if (v == null) {
+        cookingTimeError = 'Enter cooking time in minutes.';
+      } else if (v < 1 || v > 1440) {
+        cookingTimeError = 'Cooking time must be between 1 and 1440.';
+      } else {
+        cookingTimeError = null;
+      }
+    });
   }
 }

@@ -96,17 +96,65 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
       ),
       body: Center(
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 550),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+          constraints: const BoxConstraints(maxWidth: 620),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
           child: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
             child: Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(40),
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                   decoration: BoxDecoration(
                     color: surfaceWhite,
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: borderLight),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: primaryBrand.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.person_add_alt_1_rounded, color: primaryBrand),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Create Account",
+                              style: TextStyle(
+                                color: textMain,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 17,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              "Set credentials and access role for a new user.",
+                              style: TextStyle(
+                                color: textMuted,
+                                fontWeight: FontWeight.w500,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.all(28),
+                  decoration: BoxDecoration(
+                    color: surfaceWhite,
+                    borderRadius: BorderRadius.circular(18),
                     border: Border.all(color: borderLight),
                     boxShadow: [
                       BoxShadow(
@@ -130,24 +178,22 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                             ),
                           ),
                           const SizedBox(width: 16),
-                          const Text(
-                            "Account Credentials",
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w900,
-                              color: textMain,
-                            ),
-                          ),
+                          const Text("Account Credentials",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: textMain,
+                              )),
                         ],
                       ),
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 22),
 
                       _buildTextField(
                         controller: nameController,
                         label: "Full Name",
                         icon: Icons.person_outline_rounded,
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
 
                       _buildTextField(
                         controller: emailController,
@@ -155,7 +201,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                         icon: Icons.email_outlined,
                         keyboardType: TextInputType.emailAddress,
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
 
                       _buildTextField(
                         controller: passwordController,
@@ -163,7 +209,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                         icon: Icons.lock_outline_rounded,
                         obscureText: true,
                       ),
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 20),
 
                       const Text(
                         "System Role",
@@ -190,17 +236,17 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                         items: const [
                           DropdownMenuItem(
                             value: 'user',
-                            child: Text("Standard User Access"),
+                            child: Text("User Access"),
                           ),
                           DropdownMenuItem(
                             value: 'admin',
-                            child: Text("Administrative Access"),
+                            child: Text("Admin Access"),
                           ),
                         ],
                         onChanged: (val) => setState(() => selectedRole = val!),
                       ),
 
-                      const SizedBox(height: 48),
+                      const SizedBox(height: 30),
 
                       SizedBox(
                         width: double.infinity,
@@ -225,7 +271,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                                   ),
                                 )
                               : const Text(
-                                  "Deploy New Account",
+                                  "Create New Account",
                                   style: TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w800,

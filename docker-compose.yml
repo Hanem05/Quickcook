@@ -6,6 +6,18 @@ services:
       dockerfile: Dockerfile
     container_name: quickcook_app
     working_dir: /var/www
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: quickcook
+      DB_USERNAME: quickcook
+      DB_PASSWORD: root
+      CACHE_STORE: file
+      SESSION_DRIVER: file
+      QUEUE_CONNECTION: sync
     volumes:
       - ./quick_cook_backend:/var/www
     depends_on:

@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
 
 class MonitorApiUsage
@@ -23,13 +24,30 @@ class MonitorApiUsage
         // Calculate difference in milliseconds
         $latency = (int) round(($endTime - $startTime) * 1000);
 
-        \DB::table('api_logs')->insert([
-            'endpoint' => $request->path(),
-            'method' => $request->method(),
-            'status_code' => $response->getStatusCode(),
-            'latency_ms' => $latency, // 3. MUST MATCH DATABASE COLUMN NAME
-            'created_at' => now(),
-        ]);
+        // Keep hot endpoints fast and avoid logging overhead failures.
+        $hot = [
+            'api/recipes',
+            'api/ingredients',
+            'api/recommended-recipes',
+            'api/home/feed',
+        ];
+        if (in_array($request->path(), $hot, true)) {
+            return $response;
+        }
+
+        try {
+            if (Schema::hasTable('api_logs')) {
+                \DB::table('api_logs')->insert([
+                    'endpoint' => $request->path(),
+                    'method' => $request->method(),
+                    'status_code' => $response->getStatusCode(),
+                    'latency_ms' => $latency, // 3. MUST MATCH DATABASE COLUMN NAME
+                    'created_at' => now(),
+                ]);
+            }
+        } catch (\Throwable $e) {
+            // Intentionally swallow logging failures so API responses stay fast.
+        }
 
         return $response;
     }

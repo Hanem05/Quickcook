@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:file_saver/file_saver.dart'; // ADDED: Cross-platform file saving
+import 'package:provider/provider.dart';
 import '../models/recipe.dart';
 import '../services/api_service.dart';
+import '../theme/theme_notifier.dart';
 import 'recipes_form_screen.dart';
 import 'create_user_screen.dart';
 import 'login_screen.dart';
@@ -37,7 +39,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   int _errorLogsLastPage = 1;
   int _errorLogsTotal = 0;
   bool _errorLogsLoading = false;
-  static const int _kErrorLogsPerPage = 15;
+  static const int _kErrorLogsPerPage = 10;
   AdminStats? adminStats;
   Map<String, dynamic>? activityStats;
   int totalUsers = 0;
@@ -51,7 +53,24 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   String? _selectedInsightDate;
   String? _selectedInsightMonth;
 
-  int _apiDisplayCount = 5;
+  int _apiUsagePage = 1;
+  int _apiUsageLastPage = 1;
+  int _apiUsageTotal = 0;
+  bool _apiUsageLoading = false;
+  bool _apiUsageLoadingMore = false;
+  static const int _kApiUsagePerPage = 10;
+
+  int _performancePage = 1;
+  int _performanceLastPage = 1;
+  int _performanceTotal = 0;
+  bool _performanceLoading = false;
+  bool _performanceLoadingMore = false;
+  static const int _kPerformancePerPage = 10;
+
+  static const int _usersRowsPerPage = 20;
+  static const int _recipesRowsPerPage = 20;
+  int _usersPage = 0;
+  int _recipesPage = 0;
 
   // --- NAVIGATION & SEARCH STATE ---
   int _selectedIndex = 0;
@@ -73,13 +92,20 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   static const Color warningAmber = Color(0xFFF59E0B);
   static const Color infoBlue = Color(0xFF0EA5E9);
 
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _pageBg => _isDark ? const Color(0xFF0F0F12) : bgSoft;
+  Color get _panelBg => _isDark ? const Color(0xFF1A1A1E) : surfaceWhite;
+  Color get _panelBorder => _isDark ? const Color(0xFF2F2F36) : borderLight;
+  Color get _mainText => _isDark ? const Color(0xFFE4E4E7) : textMain;
+  Color get _mutedText => _isDark ? const Color(0xFFB0B0BA) : textMuted;
+  Color get _sidebarBg => _isDark ? const Color(0xFF0B0B0E) : darkSlate;
+  Color get _sidebarText => _isDark ? const Color(0xFFE4E4E7) : Colors.white;
+  Color get _panelShadowColor =>
+      _isDark ? Colors.black.withOpacity(0.35) : Colors.black.withOpacity(0.03);
+
   @override
   void initState() {
     super.initState();
-    // 🌿 ADDED: UI listeners to refresh when searching
-    userSearchController.addListener(() => setState(() {}));
-    recipeSearchController.addListener(() => setState(() {}));
-
     // 🔥 AUTO SET TODAY
     final now = DateTime.now();
     _selectedInsightDate =
@@ -108,14 +134,16 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     bool recipesOk = false;
     bool usersOk = false;
 
+    final recipesFuture = ApiService.fetchRecipes(forceRefresh: true);
+    final usersFuture = ApiService.fetchUsers();
     try {
-      recipeData = await ApiService.fetchRecipes();
+      recipeData = await recipesFuture;
       recipesOk = true;
     } catch (e) {
       debugPrint('Admin load recipes: $e');
     }
     try {
-      userData = await ApiService.fetchUsers();
+      userData = await usersFuture;
       usersOk = true;
     } catch (e) {
       debugPrint('Admin load users: $e');
@@ -130,7 +158,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       loading = false;
     });
     _loadAnalyticsInBackground();
-    _apiDisplayCount = 5;
 
     if (!recipesOk && !usersOk && mounted) {
       _showSnackBar("System Sync Failed", isError: true);
@@ -143,11 +170,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     List<dynamic>? nextPopular;
     Map<String, dynamic>? nextActivityStats;
     List<dynamic>? nextIngredientUsage;
-    List<dynamic>? nextErrorLogs;
-    Map<String, dynamic>? nextErrorMeta;
     List<dynamic>? nextActivityLogs;
-    List<dynamic>? nextApiUsage;
-    List<dynamic>? nextPerformance;
 
     try {
       nextAdminStats = await ApiService.fetchAdminStats();
@@ -173,32 +196,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       debugPrint('ingredient usage: $e');
     }
     try {
-      final r = await ApiService.fetchErrorLogsPaginated(
-        page: 1,
-        perPage: _kErrorLogsPerPage,
-      );
-      nextErrorLogs = r['items'] as List<dynamic>;
-      final m = r['meta'];
-      if (m is Map) {
-        nextErrorMeta = Map<String, dynamic>.from(m);
-      }
-    } catch (e) {
-      debugPrint('error logs: $e');
-    }
-    try {
       nextActivityLogs = await ApiService.fetchActivityLogs(_activityPage);
     } catch (e) {
       debugPrint('activity logs: $e');
-    }
-    try {
-      nextApiUsage = await ApiService.fetchApiUsage();
-    } catch (e) {
-      debugPrint('api usage: $e');
-    }
-    try {
-      nextPerformance = await ApiService.fetchPerformanceMetrics();
-    } catch (e) {
-      debugPrint('performance metrics: $e');
     }
 
     if (!mounted) return;
@@ -207,15 +207,15 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       if (nextPopular != null) popularRecipes = nextPopular;
       if (nextActivityStats != null) activityStats = nextActivityStats;
       if (nextIngredientUsage != null) ingredientUsage = nextIngredientUsage;
-      if (nextErrorLogs != null) errorLogs = nextErrorLogs;
-      if (nextErrorMeta != null) _applyErrorLogsMeta(nextErrorMeta);
       if (nextActivityLogs != null) {
         activityLogs = nextActivityLogs;
         _hasMoreActivity = nextActivityLogs.length == 10;
       }
-      if (nextApiUsage != null) apiUsageData = nextApiUsage;
-      if (nextPerformance != null) performanceMetrics = nextPerformance;
     });
+
+    await _reloadApiUsage(reset: true);
+    await _reloadErrorLogs(resetPage: true);
+    await _reloadPerformanceMetrics(reset: true);
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -303,41 +303,103 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: surfaceWhite,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text(
-          "Add New Ingredient",
-          style: TextStyle(fontWeight: FontWeight.w900, color: textMain),
-        ),
-        content: _buildDialogTextField(
-          label: "Ingredient Name",
-          icon: Icons.kitchen_rounded,
-          controller: nameController,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel", style: TextStyle(color: textMuted)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryBrand,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+        backgroundColor: _panelBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+        contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        title: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: primaryBrand.withOpacity(0.14),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.kitchen_rounded, color: primaryBrand, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                "Add New Ingredient",
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  color: _mainText,
+                  fontSize: 22,
+                ),
               ),
             ),
-            onPressed: () async {
-              if (nameController.text.isEmpty) return;
-              Navigator.pop(context);
-              try {
-                await ApiService.createIngredient(nameController.text.trim());
-                _showSnackBar("Ingredient added successfully!");
-              } catch (e) {
-                _showSnackBar("Failed to add ingredient.", isError: true);
-              }
-            },
-            child: const Text("Add to Pantry"),
+          ],
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Create a pantry ingredient that can be reused in recipes.",
+                style: TextStyle(
+                  color: _mutedText,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _buildDialogTextField(
+                label: "Ingredient Name",
+                icon: Icons.kitchen_rounded,
+                controller: nameController,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: _panelBorder),
+                    foregroundColor: _mainText,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                  child: const Text("Cancel"),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryBrand,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                  onPressed: () async {
+                    if (nameController.text.trim().isEmpty) {
+                      _showSnackBar("Ingredient name is required.", isError: true);
+                      return;
+                    }
+                    Navigator.pop(context);
+                    try {
+                      await ApiService.createIngredient(nameController.text.trim());
+                      _showSnackBar("Ingredient added successfully!");
+                    } catch (e) {
+                      _showSnackBar("Failed to add ingredient.", isError: true);
+                    }
+                  },
+                  child: const Text("Add to Pantry"),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -441,7 +503,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: surfaceWhite,
+        backgroundColor: _panelBg,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         titlePadding: const EdgeInsets.fromLTRB(32, 32, 32, 16),
@@ -537,16 +599,16 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }) {
     return TextField(
       controller: controller,
-      style: const TextStyle(fontWeight: FontWeight.w600, color: textMain),
+      style: TextStyle(fontWeight: FontWeight.w600, color: _mainText),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(
-          color: textMuted,
+        labelStyle: TextStyle(
+          color: _mutedText,
           fontWeight: FontWeight.w500,
         ),
-        prefixIcon: Icon(icon, color: textMuted, size: 20),
+        prefixIcon: Icon(icon, color: _mutedText, size: 20),
         filled: true,
-        fillColor: bgSoft,
+        fillColor: _pageBg,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
@@ -563,7 +625,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: bgSoft,
+      backgroundColor: _pageBg,
       body: Row(
         children: [
           _buildSidebar(),
@@ -604,13 +666,24 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   // --- FULL DIRECTORY VIEWS ---
   Widget _buildFullUsersView() {
-    // 🌿 ADDED: Real-time filtering logic
+    // Filter first, then paginate to avoid rendering huge tables on each tab switch.
     final filteredUsers = users.where((u) {
       final query = userSearchController.text.toLowerCase();
       final name = (u['name'] ?? '').toString().toLowerCase();
       final email = (u['email'] ?? '').toString().toLowerCase();
       return name.contains(query) || email.contains(query);
     }).toList();
+    final userTotalPages =
+        ((filteredUsers.length + _usersRowsPerPage - 1) ~/ _usersRowsPerPage)
+            .clamp(1, 999999);
+    final safeUsersPage = _usersPage >= userTotalPages
+        ? userTotalPages - 1
+        : _usersPage;
+    final userStart = safeUsersPage * _usersRowsPerPage;
+    final userEnd = (userStart + _usersRowsPerPage > filteredUsers.length)
+        ? filteredUsers.length
+        : userStart + _usersRowsPerPage;
+    final visibleUsers = filteredUsers.sublist(userStart, userEnd);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(40),
@@ -618,12 +691,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: surfaceWhite,
+          color: _panelBg,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: borderLight),
+          border: Border.all(color: _panelBorder),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.03),
+              color: _panelShadowColor,
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),
@@ -645,12 +718,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     ),
                   ),
                   const SizedBox(width: 16),
-                  const Text(
+                  Text(
                     "User Management",
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
-                      color: textMain,
+                      color: _mainText,
                     ),
                   ),
                   const SizedBox(width: 32),
@@ -658,11 +731,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   Expanded(
                     child: TextField(
                       controller: userSearchController,
+                      onChanged: (_) => setState(() => _usersPage = 0),
                       decoration: InputDecoration(
                         hintText: "Search name or email...",
                         prefixIcon: const Icon(Icons.search, size: 20),
                         filled: true,
-                        fillColor: bgSoft,
+                        fillColor: _pageBg,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide.none,
@@ -680,8 +754,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     icon: const Icon(Icons.download_rounded, size: 18),
                     label: const Text("Export CSV"),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: textMain,
-                      side: const BorderSide(color: borderLight),
+                      foregroundColor: _mainText,
+                      side: BorderSide(color: _panelBorder),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
                         vertical: 14,
@@ -694,18 +768,22 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 ],
               ),
             ),
-            const Divider(height: 1, color: borderLight),
+            Divider(height: 1, color: _panelBorder),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
                 headingRowColor: WidgetStateProperty.all(
-                  bgSoft.withOpacity(0.5),
+                  _isDark ? _pageBg : bgSoft.withOpacity(0.5),
                 ),
-                headingTextStyle: const TextStyle(
+                headingTextStyle: TextStyle(
                   fontWeight: FontWeight.w800,
-                  color: textMuted,
+                  color: _mutedText,
                   fontSize: 12,
                   letterSpacing: 0.5,
+                ),
+                dataTextStyle: TextStyle(
+                  color: _mainText,
+                  fontWeight: FontWeight.w600,
                 ),
                 dataRowMinHeight: 70,
                 dataRowMaxHeight: 70,
@@ -719,7 +797,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   DataColumn(label: Text('JOINED DATE')),
                   DataColumn(label: Text('ACTIONS')),
                 ],
-                rows: filteredUsers.map((u) {
+                rows: visibleUsers.map((u) {
                   final role = u['role']?.toString().toLowerCase() ?? 'user';
                   final isAdmin = role == 'admin';
                   return DataRow(
@@ -727,9 +805,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       DataCell(
                         Text(
                           u['id']?.toString() ?? '-',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            color: textMuted,
+                            color: _mutedText,
                           ),
                         ),
                       ),
@@ -756,9 +834,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                             const SizedBox(width: 12),
                             Text(
                               u['name'] ?? 'Unknown',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontWeight: FontWeight.w700,
-                                color: textMain,
+                                color: _mainText,
                               ),
                             ),
                           ],
@@ -767,8 +845,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       DataCell(
                         Text(
                           u['email'] ?? 'No email',
-                          style: const TextStyle(
-                            color: textMuted,
+                          style: TextStyle(
+                            color: _mutedText,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
@@ -799,8 +877,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       DataCell(
                         Text(
                           u['created_at']?.toString() ?? 'N/A',
-                          style: const TextStyle(
-                            color: textMuted,
+                          style: TextStyle(
+                            color: _mutedText,
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
                           ),
@@ -833,7 +911,20 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       ),
                     ],
                   );
-                }).toList(),
+                }).toList(growable: false),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+              child: _buildStandardPaginationBar(
+                summary: filteredUsers.isEmpty
+                    ? "No users"
+                    : "Showing ${userStart + 1}-$userEnd of ${filteredUsers.length}",
+                pageLabel: "${safeUsersPage + 1}/$userTotalPages",
+                canGoPrev: safeUsersPage > 0,
+                canGoNext: safeUsersPage < userTotalPages - 1,
+                onPrev: () => setState(() => _usersPage = safeUsersPage - 1),
+                onNext: () => setState(() => _usersPage = safeUsersPage + 1),
               ),
             ),
           ],
@@ -842,13 +933,140 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     );
   }
 
+  Widget _buildStandardPaginationBar({
+    required String summary,
+    required String pageLabel,
+    bool canGoPrev = false,
+    bool canGoNext = false,
+    VoidCallback? onPrev,
+    VoidCallback? onNext,
+    String? actionLabel,
+    VoidCallback? onAction,
+    bool actionLoading = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: _pageBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _panelBorder),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              summary,
+              style: TextStyle(
+                color: _mutedText,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            ElevatedButton(
+              onPressed: actionLoading ? null : onAction,
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                backgroundColor: primaryBrand,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: actionLoading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      actionLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          _pagerIcon(
+            icon: Icons.chevron_left_rounded,
+            enabled: canGoPrev,
+            onTap: onPrev,
+          ),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: _panelBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _panelBorder),
+            ),
+            child: Text(
+              pageLabel,
+              style: TextStyle(
+                color: _mainText,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          _pagerIcon(
+            icon: Icons.chevron_right_rounded,
+            enabled: canGoNext,
+            onTap: onNext,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pagerIcon({
+    required IconData icon,
+    required bool enabled,
+    required VoidCallback? onTap,
+  }) {
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: enabled ? _panelBg : _pageBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _panelBorder),
+        ),
+        child: Icon(
+          icon,
+          size: 18,
+          color: enabled ? _mainText : _mutedText,
+        ),
+      ),
+    );
+  }
+
   Widget _buildFullRecipesView() {
-    // 🌿 ADDED: Real-time filtering logic
+    // Filter first, then paginate so recipe cards/images don't all build at once.
     final filteredRecipes = recipes.where((r) {
       final query = recipeSearchController.text.toLowerCase();
       return r.name.toLowerCase().contains(query) ||
           (r.category?.toLowerCase() ?? "").contains(query);
     }).toList();
+    final recipeTotalPages =
+        ((filteredRecipes.length + _recipesRowsPerPage - 1) ~/
+                _recipesRowsPerPage)
+            .clamp(1, 999999);
+    final safeRecipesPage = _recipesPage >= recipeTotalPages
+        ? recipeTotalPages - 1
+        : _recipesPage;
+    final recipeStart = safeRecipesPage * _recipesRowsPerPage;
+    final recipeEnd =
+        (recipeStart + _recipesRowsPerPage > filteredRecipes.length)
+        ? filteredRecipes.length
+        : recipeStart + _recipesRowsPerPage;
+    final visibleRecipes = filteredRecipes.sublist(recipeStart, recipeEnd);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(40),
@@ -856,12 +1074,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: surfaceWhite,
+          color: _panelBg,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: borderLight),
+          border: Border.all(color: _panelBorder),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.03),
+              color: _panelShadowColor,
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),
@@ -883,12 +1101,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     ),
                   ),
                   const SizedBox(width: 16),
-                  const Text(
+                  Text(
                     "Complete Recipe Library",
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w900,
-                      color: textMain,
+                      color: _mainText,
                     ),
                   ),
                   const SizedBox(width: 32),
@@ -896,11 +1114,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   Expanded(
                     child: TextField(
                       controller: recipeSearchController,
+                      onChanged: (_) => setState(() => _recipesPage = 0),
                       decoration: InputDecoration(
                         hintText: "Search dish or category...",
                         prefixIcon: const Icon(Icons.search, size: 20),
                         filled: true,
-                        fillColor: bgSoft,
+                        fillColor: _pageBg,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide.none,
@@ -918,8 +1137,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     icon: const Icon(Icons.download_rounded, size: 18),
                     label: const Text("Export CSV"),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: textMain,
-                      side: const BorderSide(color: borderLight),
+                      foregroundColor: _mainText,
+                      side: BorderSide(color: _panelBorder),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
                         vertical: 14,
@@ -932,18 +1151,22 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 ],
               ),
             ),
-            const Divider(height: 1, color: borderLight),
+            Divider(height: 1, color: _panelBorder),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
                 headingRowColor: WidgetStateProperty.all(
-                  bgSoft.withOpacity(0.5),
+                  _isDark ? _pageBg : bgSoft.withOpacity(0.5),
                 ),
-                headingTextStyle: const TextStyle(
+                headingTextStyle: TextStyle(
                   fontWeight: FontWeight.w800,
-                  color: textMuted,
+                  color: _mutedText,
                   fontSize: 12,
                   letterSpacing: 0.5,
+                ),
+                dataTextStyle: TextStyle(
+                  color: _mainText,
+                  fontWeight: FontWeight.w600,
                 ),
                 dataRowMinHeight: 76,
                 dataRowMaxHeight: 76,
@@ -957,7 +1180,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   DataColumn(label: Text('INSTRUCTIONS SUMMARY')),
                   DataColumn(label: Text('ACTIONS')),
                 ],
-                rows: filteredRecipes.map((r) {
+                rows: visibleRecipes.map((r) {
                   final categoryStr = r.category ?? 'Uncategorized';
                   final ratingsStr = r.rating?.toString() ?? 'No Rating';
                   final imageUrlStr = r.imageUrl ?? '';
@@ -967,9 +1190,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       DataCell(
                         Text(
                           r.id.toString(),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            color: textMuted,
+                            color: _mutedText,
                           ),
                         ),
                       ),
@@ -980,9 +1203,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                               width: 48,
                               height: 48,
                               decoration: BoxDecoration(
-                                color: bgSoft,
+                                color: _pageBg,
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: borderLight),
+                                border: Border.all(color: _panelBorder),
                               ),
                               clipBehavior: Clip.antiAlias,
                               child: imageUrlStr.isNotEmpty
@@ -991,18 +1214,18 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                       fit: BoxFit.cover,
                                       memCacheWidth: 96,
                                       placeholder: (context, url) => Container(
-                                        color: bgSoft,
+                                        color: _pageBg,
                                       ),
                                       errorWidget: (context, url, error) =>
-                                          const Icon(
+                                          Icon(
                                         Icons.restaurant,
-                                        color: textMuted,
+                                        color: _mutedText,
                                         size: 20,
                                       ),
                                     )
-                                  : const Icon(
+                                  : Icon(
                                       Icons.restaurant,
-                                      color: textMuted,
+                                      color: _mutedText,
                                       size: 20,
                                     ),
                             ),
@@ -1011,9 +1234,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                               width: 150,
                               child: Text(
                                 r.name,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontWeight: FontWeight.w800,
-                                  color: textMain,
+                                  color: _mainText,
                                   fontSize: 14,
                                 ),
                                 maxLines: 2,
@@ -1030,16 +1253,16 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                             vertical: 6,
                           ),
                           decoration: BoxDecoration(
-                            color: bgSoft,
+                            color: _pageBg,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: borderLight),
+                            border: Border.all(color: _panelBorder),
                           ),
                           child: Text(
                             categoryStr,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: textMuted,
+                              color: _mutedText,
                             ),
                           ),
                         ),
@@ -1056,9 +1279,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                             const SizedBox(width: 6),
                             Text(
                               ratingsStr,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontWeight: FontWeight.w800,
-                                color: textMain,
+                                color: _mainText,
                               ),
                             ),
                           ],
@@ -1071,8 +1294,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                             r.instructions,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: textMuted,
+                            style: TextStyle(
+                              color: _mutedText,
                               fontSize: 13,
                               height: 1.4,
                             ),
@@ -1111,7 +1334,20 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       ),
                     ],
                   );
-                }).toList(),
+                }).toList(growable: false),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+              child: _buildStandardPaginationBar(
+                summary: filteredRecipes.isEmpty
+                    ? "No recipes"
+                    : "Showing ${recipeStart + 1}-$recipeEnd of ${filteredRecipes.length}",
+                pageLabel: "${safeRecipesPage + 1}/$recipeTotalPages",
+                canGoPrev: safeRecipesPage > 0,
+                canGoNext: safeRecipesPage < recipeTotalPages - 1,
+                onPrev: () => setState(() => _recipesPage = safeRecipesPage - 1),
+                onNext: () => setState(() => _recipesPage = safeRecipesPage + 1),
               ),
             ),
           ],
@@ -1236,18 +1472,24 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       "API Traffic & Latency",
                       "Real-time endpoint performance monitoring.",
                       _buildApiUsageTable(),
+                      trailingIcon: Icons.visibility,
+                      onTrailingTap: _openApiUsageModal,
                     ),
                     const SizedBox(height: 32),
                     _bentoBox(
                       "System Health Status",
                       "Recent critical alerts and warnings.",
                       _buildErrorLogsSection(),
+                      trailingIcon: Icons.visibility,
+                      onTrailingTap: _openSystemHealthModal,
                     ),
                     const SizedBox(height: 32),
                     _bentoBox(
                       "Client performance",
                       "Screen transitions and slow API calls from the app.",
                       _buildPerformanceMetricsTable(),
+                      trailingIcon: Icons.visibility,
+                      onTrailingTap: _openPerformanceModal,
                     ),
                   ],
                 ),
@@ -1301,12 +1543,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
-        color: surfaceWhite,
+        color: _panelBg,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: borderLight),
+        border: Border.all(color: _panelBorder),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: _panelShadowColor,
             blurRadius: 24,
             offset: const Offset(0, 8),
           ),
@@ -1332,18 +1574,18 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
-                        color: textMain,
+                        color: _mainText,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
-                        color: textMuted,
+                        color: _mutedText,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -1352,10 +1594,10 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               ),
               if (trailingIcon != null)
                 IconButton(
-                  icon: Icon(trailingIcon, color: textMuted),
+                  icon: Icon(trailingIcon, color: _mutedText),
                   onPressed: onTrailingTap,
                   tooltip: "Download CSV",
-                  style: IconButton.styleFrom(backgroundColor: bgSoft),
+                  style: IconButton.styleFrom(backgroundColor: _pageBg),
                 ),
             ],
           ),
@@ -1444,9 +1686,32 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     if (ingredientUsage.isEmpty) {
       return _buildEmptyState("No search trends yet.", Icons.bar_chart_rounded);
     }
+    int _readCount(dynamic row) {
+      if (row is! Map) return 0;
+      final raw = row['count'];
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      return int.tryParse(raw?.toString() ?? '') ?? 0;
+    }
+
+    String _readIngredientName(dynamic row) {
+      if (row is! Map) return 'Unknown';
+      final ingredientRaw = row['ingredient'];
+      if (ingredientRaw is Map) {
+        final ingredient = Map<String, dynamic>.from(ingredientRaw);
+        final rawName = ingredient['name'];
+        if (rawName != null) {
+          final name = rawName.toString().trim();
+          if (name.isNotEmpty) return name;
+        }
+      }
+      final fallback = row['ingredient_name']?.toString().trim() ?? '';
+      return fallback.isNotEmpty ? fallback : 'Unknown';
+    }
+
     final maxY =
         (ingredientUsage
-                    .map((e) => e['count'] as int)
+                    .map((e) => _readCount(e))
                     .reduce((a, b) => a > b ? a : b) +
                 2)
             .toDouble();
@@ -1462,7 +1727,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               x: entry.key,
               barRods: [
                 BarChartRodData(
-                  toY: (entry.value['count'] as int).toDouble(),
+                  toY: _readCount(entry.value).toDouble(),
                   gradient: const LinearGradient(
                     colors: [primaryBrand, primaryBrandLight],
                     begin: Alignment.bottomCenter,
@@ -1499,7 +1764,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     return Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: Text(
-                        ingredientUsage[index]['ingredient']['name'],
+                        _readIngredientName(ingredientUsage[index]),
                         style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
@@ -1820,126 +2085,208 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
             if (isLoading) loadInitial();
 
+            String _fmtDate(String iso) {
+              final parsed = DateTime.tryParse(iso);
+              if (parsed == null) return iso;
+              return "${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
+            }
+
             return AlertDialog(
-              backgroundColor: surfaceWhite,
+              backgroundColor: _panelBg,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
               ),
-              title: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    "All Activity Logs",
-                    style: TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      _exportActivityLogsSmart(
-                        modalLogs: modalLogs,
-                        selectedDate: selectedDate,
-                        selectedMonth: selectedMonth,
-                      );
-                    },
-                    icon: const Icon(Icons.download, size: 18),
-                    label: const Text("Export CSV"),
-                  ),
-                ],
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+              contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              title: Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                decoration: BoxDecoration(
+                  color: _pageBg,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _panelBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: primaryBrand.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.timeline_rounded,
+                        color: primaryBrand,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "All Activity Logs",
+                            style: TextStyle(
+                              color: _mainText,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 19,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "Track user activity in real-time",
+                            style: TextStyle(
+                              color: _mutedText,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        _exportActivityLogsSmart(
+                          modalLogs: modalLogs,
+                          selectedDate: selectedDate,
+                          selectedMonth: selectedMonth,
+                        );
+                      },
+                      icon: const Icon(Icons.download_rounded, size: 17),
+                      label: const Text("Export CSV"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _mainText,
+                        side: BorderSide(color: _panelBorder),
+                        backgroundColor: _panelBg,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               content: SizedBox(
                 width: 600,
                 height: 500,
                 child: isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? Center(child: CircularProgressIndicator(color: _mainText))
                     : Column(
                         children: [
-                          // 🔥 STEP 4 GOES HERE
-                          Row(
-                            children: [
-                              // 📅 SELECT DATE
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () async {
-                                    final picked = await showDatePicker(
-                                      context: context,
-                                      initialDate: DateTime.now(),
-                                      firstDate: DateTime(2020),
-                                      lastDate: DateTime.now(),
-                                    );
-
-                                    if (picked != null) {
-                                      setModalState(() {
-                                        selectedDate = picked.toIso8601String();
-                                        selectedMonth = null;
-                                        page = 1;
-                                        isLoading = true;
-                                      });
-                                    }
-                                  },
-                                  child: const Text("Select Date"),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _pageBg,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: _panelBorder),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedDate = _fmtDate(picked.toIso8601String());
+                                          selectedMonth = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.calendar_month_rounded, size: 18),
+                                    label: Text(selectedDate == null ? "Select Date" : _fmtDate(selectedDate!)),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                    ),
+                                  ),
                                 ),
-                              ),
-
-                              const SizedBox(width: 12),
-
-                              // 📆 SELECT MONTH
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () async {
-                                    final picked = await showDatePicker(
-                                      context: context,
-                                      initialDate: DateTime.now(),
-                                      firstDate: DateTime(2020),
-                                      lastDate: DateTime.now(),
-                                      helpText: "Select Month",
-                                      fieldHintText: "MM/YYYY",
-                                    );
-
-                                    if (picked != null) {
-                                      setModalState(() {
-                                        // 🔥 ONLY KEEP MONTH + YEAR
-                                        selectedMonth =
-                                            "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
-
-                                        selectedDate = null;
-                                        page = 1;
-                                        isLoading = true;
-                                      });
-                                    }
-                                  },
-                                  child: Text(selectedMonth ?? "Select Month"),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                        helpText: "Select Month",
+                                        fieldHintText: "MM/YYYY",
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedMonth =
+                                              "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
+                                          selectedDate = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.date_range_rounded, size: 18),
+                                    label: Text(selectedMonth ?? "Select Month"),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                    ),
+                                  ),
                                 ),
-                              ),
-
-                              const SizedBox(width: 12),
-
-                              // 🔄 RESET
-                              IconButton(
-                                onPressed: () {
-                                  setModalState(() {
-                                    selectedDate = null;
-                                    selectedMonth = null;
-                                    page = 1;
-                                    isLoading = true;
-                                  });
-                                },
-                                icon: const Icon(Icons.refresh),
-                              ),
-                            ],
+                                const SizedBox(width: 10),
+                                IconButton.filledTonal(
+                                  onPressed: () {
+                                    setModalState(() {
+                                      selectedDate = null;
+                                      selectedMonth = null;
+                                      page = 1;
+                                      isLoading = true;
+                                    });
+                                  },
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  tooltip: 'Reset filters',
+                                ),
+                              ],
+                            ),
                           ),
 
                           const SizedBox(height: 12),
 
-                          // 🔥 YOUR EXISTING LIST (DO NOT TOUCH)
                           Expanded(
-                            child: ListView.builder(
-                              itemCount: modalLogs.length,
-                              itemBuilder: (context, index) {
-                                bool isLast = index == modalLogs.length - 1;
-                                return _buildTimelineTile(
-                                  modalLogs[index],
-                                  isLast,
-                                );
-                              },
+                            child: Container(
+                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+                              decoration: BoxDecoration(
+                                color: _pageBg.withOpacity(0.6),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: _panelBorder),
+                              ),
+                              child: ListView.builder(
+                                itemCount: modalLogs.length,
+                                itemBuilder: (context, index) {
+                                  bool isLast = index == modalLogs.length - 1;
+                                  return _buildTimelineTile(
+                                    modalLogs[index],
+                                    isLast,
+                                  );
+                                },
+                              ),
                             ),
                           ),
 
@@ -1948,6 +2295,13 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           if (hasMore)
                             ElevatedButton(
                               onPressed: isLoadingMore ? null : loadMore,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryBrand,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
                               child: isLoadingMore
                                   ? const SizedBox(
                                       width: 18,
@@ -1960,9 +2314,449 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                   : const Text("Load More"),
                             )
                           else
-                            const Text(
+                            Text(
                               "No more activities",
-                              style: TextStyle(color: Colors.grey),
+                              style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
+                            ),
+                        ],
+                      ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text("Close", style: TextStyle(color: _mainText)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _openApiUsageModal() {
+    int page = 1;
+    int lastPage = 1;
+    int total = 0;
+    List<dynamic> modalRows = [];
+    bool isLoading = true;
+    bool isLoadingMore = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> loadInitial() async {
+              final r = await ApiService.fetchApiUsagePaginated(
+                page: page,
+                perPage: _kApiUsagePerPage,
+              );
+              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              setModalState(() {
+                modalRows = List<dynamic>.from(r['items'] as List? ?? []);
+                lastPage = (meta['last_page'] as num?)?.toInt() ?? 1;
+                total = (meta['total'] as num?)?.toInt() ?? modalRows.length;
+                isLoading = false;
+              });
+            }
+
+            Future<void> loadMore() async {
+              if (isLoadingMore || page >= lastPage) return;
+              setModalState(() => isLoadingMore = true);
+              page++;
+              final r = await ApiService.fetchApiUsagePaginated(
+                page: page,
+                perPage: _kApiUsagePerPage,
+              );
+              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              setModalState(() {
+                modalRows.addAll(List<dynamic>.from(r['items'] as List? ?? []));
+                lastPage = (meta['last_page'] as num?)?.toInt() ?? lastPage;
+                total = (meta['total'] as num?)?.toInt() ?? total;
+              });
+              setModalState(() => isLoadingMore = false);
+            }
+
+            if (isLoading) loadInitial();
+
+            return AlertDialog(
+              backgroundColor: _panelBg,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              title: const Text(
+                "All API Traffic",
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              content: SizedBox(
+                width: 700,
+                height: 500,
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : Column(
+                        children: [
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: modalRows.length,
+                              itemBuilder: (context, index) {
+                                final log = modalRows[index];
+                                final latency = double.tryParse(
+                                      log['avg_latency']?.toString() ?? '0',
+                                    ) ??
+                                    0;
+                                final isSlow = latency > 400;
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: bgSoft,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: borderLight),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          "/${log['endpoint'] ?? 'unknown'}",
+                                          style: const TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                      Text("${log['hits'] ?? 0} reqs"),
+                                      const SizedBox(width: 12),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 5,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: isSlow
+                                              ? dangerRed.withOpacity(0.1)
+                                              : successEmerald.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        child: Text(
+                                          "${latency.toStringAsFixed(0)} ms",
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            "Loaded ${modalRows.length} of $total",
+                            style: const TextStyle(
+                              color: textMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (page < lastPage)
+                            TextButton(
+                              onPressed: isLoadingMore ? null : loadMore,
+                              child: isLoadingMore
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text("Load More"),
+                            ),
+                        ],
+                      ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Close"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _openSystemHealthModal() {
+    int page = 1;
+    int lastPage = 1;
+    int total = 0;
+    List<dynamic> modalRows = [];
+    bool isLoading = true;
+    bool isLoadingMore = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> loadInitial() async {
+              final r = await ApiService.fetchErrorLogsPaginated(
+                page: page,
+                perPage: _kErrorLogsPerPage,
+              );
+              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              setModalState(() {
+                modalRows = List<dynamic>.from(r['items'] as List? ?? []);
+                lastPage = (meta['last_page'] as num?)?.toInt() ?? 1;
+                total = (meta['total'] as num?)?.toInt() ?? modalRows.length;
+                isLoading = false;
+              });
+            }
+
+            Future<void> loadMore() async {
+              if (isLoadingMore || page >= lastPage) return;
+              setModalState(() => isLoadingMore = true);
+              page++;
+              final r = await ApiService.fetchErrorLogsPaginated(
+                page: page,
+                perPage: _kErrorLogsPerPage,
+              );
+              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              setModalState(() {
+                modalRows.addAll(
+                  List<dynamic>.from(r['items'] as List? ?? []),
+                );
+                lastPage = (meta['last_page'] as num?)?.toInt() ?? lastPage;
+                total = (meta['total'] as num?)?.toInt() ?? total;
+              });
+              setModalState(() => isLoadingMore = false);
+            }
+
+            if (isLoading) loadInitial();
+
+            return AlertDialog(
+              backgroundColor: _panelBg,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              title: const Text(
+                "All System Health Logs",
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              content: SizedBox(
+                width: 700,
+                height: 500,
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : Column(
+                        children: [
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: modalRows.length,
+                              itemBuilder: (context, index) {
+                                final error = modalRows[index];
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: dangerRed.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: dangerRed.withOpacity(0.2),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        (error['message'] ?? 'Unhandled error')
+                                            .toString(),
+                                        style: const TextStyle(
+                                          color: dangerRed,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        "/${error['endpoint'] ?? 'unknown'}",
+                                        style: const TextStyle(
+                                          color: textMuted,
+                                          fontSize: 11,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            "Loaded ${modalRows.length} of $total",
+                            style: const TextStyle(
+                              color: textMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (page < lastPage)
+                            TextButton(
+                              onPressed: isLoadingMore ? null : loadMore,
+                              child: isLoadingMore
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text("Load More"),
+                            ),
+                        ],
+                      ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Close"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _openPerformanceModal() {
+    int page = 1;
+    int lastPage = 1;
+    int total = 0;
+    List<dynamic> modalRows = [];
+    bool isLoading = true;
+    bool isLoadingMore = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> loadInitial() async {
+              final r = await ApiService.fetchPerformanceMetricsPaginated(
+                page: page,
+                perPage: _kPerformancePerPage,
+              );
+              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              setModalState(() {
+                modalRows = List<dynamic>.from(r['items'] as List? ?? []);
+                lastPage = (meta['last_page'] as num?)?.toInt() ?? 1;
+                total = (meta['total'] as num?)?.toInt() ?? modalRows.length;
+                isLoading = false;
+              });
+            }
+
+            Future<void> loadMore() async {
+              if (isLoadingMore || page >= lastPage) return;
+              setModalState(() => isLoadingMore = true);
+              page++;
+              final r = await ApiService.fetchPerformanceMetricsPaginated(
+                page: page,
+                perPage: _kPerformancePerPage,
+              );
+              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              setModalState(() {
+                modalRows.addAll(
+                  List<dynamic>.from(r['items'] as List? ?? []),
+                );
+                lastPage = (meta['last_page'] as num?)?.toInt() ?? lastPage;
+                total = (meta['total'] as num?)?.toInt() ?? total;
+              });
+              setModalState(() => isLoadingMore = false);
+            }
+
+            if (isLoading) loadInitial();
+
+            return AlertDialog(
+              backgroundColor: _panelBg,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              title: const Text(
+                "All Client Performance Metrics",
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              content: SizedBox(
+                width: 700,
+                height: 500,
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : Column(
+                        children: [
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: modalRows.length,
+                              itemBuilder: (context, index) {
+                                final row = modalRows[index];
+                                final sevColor =
+                                    (row['duration_ms'] as int? ?? 0) > 1500
+                                    ? warningAmber
+                                    : successEmerald;
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: bgSoft,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: borderLight),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.timeline,
+                                        color: sevColor,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          '${row['kind'] ?? ''} · ${row['name'] ?? ''} · ${row['duration_ms'] ?? 0} ms',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            "Loaded ${modalRows.length} of $total",
+                            style: const TextStyle(
+                              color: textMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (page < lastPage)
+                            TextButton(
+                              onPressed: isLoadingMore ? null : loadMore,
+                              child: isLoadingMore
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text("Load More"),
                             ),
                         ],
                       ),
@@ -1985,12 +2779,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       return _buildEmptyState("No API traffic recorded.", Icons.api_rounded);
     }
 
-    // 🔥 LIMIT DATA HERE
-    final displayData = apiUsageData.take(_apiDisplayCount).toList();
-
     return Column(
       children: [
-        ...displayData.map((log) {
+        ...apiUsageData.map((log) {
           final latency =
               double.tryParse(log['avg_latency']?.toString() ?? '0') ?? 0;
 
@@ -2000,9 +2791,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: surfaceWhite,
+              color: _panelBg,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: borderLight),
+              border: Border.all(color: _panelBorder),
             ),
             child: Row(
               children: [
@@ -2011,26 +2802,36 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   alignment: Alignment.center,
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   decoration: BoxDecoration(
-                    color: darkSlate.withOpacity(0.05),
+                    color: _isDark
+                        ? Colors.white.withOpacity(0.08)
+                        : darkSlate.withOpacity(0.05),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: const Text(
+                  child: Text(
                     "GET",
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: _mainText,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Text(
                     "/${log['endpoint']}",
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
+                      color: _mainText,
                     ),
                   ),
                 ),
-                Text("${log['hits']} reqs"),
+                Text(
+                  "${log['hits']} reqs",
+                  style: TextStyle(color: _mutedText, fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(width: 16),
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -2043,30 +2844,35 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         : successEmerald.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Text("${latency.toStringAsFixed(0)} ms"),
+                  child: Text(
+                    "${latency.toStringAsFixed(0)} ms",
+                    style: TextStyle(
+                      color: isSlow ? dangerRed : successEmerald,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ],
             ),
           );
-        }).toList(),
+        }).toList(growable: false),
 
         const SizedBox(height: 10),
 
-        // 🔥 VIEW MORE BUTTON
-        if (_apiDisplayCount < apiUsageData.length)
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _apiDisplayCount += 5;
-              });
-            },
-            child: const Text(
-              "View More API Traffic",
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-          )
-        else
-          const Text("No more API logs", style: TextStyle(color: Colors.grey)),
+        if (_apiUsageLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+
+        const SizedBox(height: 6),
+        _buildStandardPaginationBar(
+          summary: "Loaded ${apiUsageData.length} of $_apiUsageTotal API rows",
+          pageLabel: "$_apiUsagePage/$_apiUsageLastPage",
+          actionLabel: _apiUsagePage < _apiUsageLastPage ? "Load More" : null,
+          onAction: _loadMoreApiUsage,
+          actionLoading: _apiUsageLoadingMore,
+        ),
       ],
     );
   }
@@ -2078,8 +2884,107 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     if (cp != null) _errorLogsPage = cp;
   }
 
-  Future<void> _reloadErrorLogs({bool resetPage = false}) async {
-    if (resetPage) _errorLogsPage = 1;
+  void _applyApiUsageMeta(Map<String, dynamic> m) {
+    _apiUsageLastPage = (m['last_page'] as num?)?.toInt() ?? 1;
+    _apiUsageTotal = (m['total'] as num?)?.toInt() ?? 0;
+    final cp = (m['current_page'] as num?)?.toInt();
+    if (cp != null) _apiUsagePage = cp;
+  }
+
+  void _applyPerformanceMeta(Map<String, dynamic> m) {
+    _performanceLastPage = (m['last_page'] as num?)?.toInt() ?? 1;
+    _performanceTotal = (m['total'] as num?)?.toInt() ?? 0;
+    final cp = (m['current_page'] as num?)?.toInt();
+    if (cp != null) _performancePage = cp;
+  }
+
+  Future<void> _reloadApiUsage({bool reset = false}) async {
+    if (reset) {
+      _apiUsagePage = 1;
+      apiUsageData = [];
+    }
+    setState(() => _apiUsageLoading = true);
+    try {
+      final r = await ApiService.fetchApiUsagePaginated(
+        page: _apiUsagePage,
+        perPage: _kApiUsagePerPage,
+      );
+      if (!mounted) return;
+      setState(() {
+        final items = r['items'] as List<dynamic>;
+        apiUsageData = reset ? items : [...apiUsageData, ...items];
+        final meta = r['meta'];
+        if (meta is Map) {
+          _applyApiUsageMeta(Map<String, dynamic>.from(meta));
+        }
+        _apiUsageLoading = false;
+        _apiUsageLoadingMore = false;
+      });
+    } catch (e) {
+      debugPrint('API usage reload: $e');
+      if (mounted) {
+        setState(() {
+          _apiUsageLoading = false;
+          _apiUsageLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMoreApiUsage() async {
+    if (_apiUsageLoadingMore || _apiUsagePage >= _apiUsageLastPage) return;
+    setState(() => _apiUsageLoadingMore = true);
+    _apiUsagePage++;
+    await _reloadApiUsage(reset: false);
+  }
+
+  Future<void> _reloadPerformanceMetrics({bool reset = false}) async {
+    if (reset) {
+      _performancePage = 1;
+      performanceMetrics = [];
+    }
+    setState(() => _performanceLoading = true);
+    try {
+      final r = await ApiService.fetchPerformanceMetricsPaginated(
+        page: _performancePage,
+        perPage: _kPerformancePerPage,
+      );
+      if (!mounted) return;
+      setState(() {
+        final items = r['items'] as List<dynamic>;
+        performanceMetrics = reset ? items : [...performanceMetrics, ...items];
+        final meta = r['meta'];
+        if (meta is Map) {
+          _applyPerformanceMeta(Map<String, dynamic>.from(meta));
+        }
+        _performanceLoading = false;
+        _performanceLoadingMore = false;
+      });
+    } catch (e) {
+      debugPrint('Performance reload: $e');
+      if (mounted) {
+        setState(() {
+          _performanceLoading = false;
+          _performanceLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMorePerformanceMetrics() async {
+    if (_performanceLoadingMore || _performancePage >= _performanceLastPage) {
+      return;
+    }
+    setState(() => _performanceLoadingMore = true);
+    _performancePage++;
+    await _reloadPerformanceMetrics(reset: false);
+  }
+
+  Future<void> _reloadErrorLogs({bool resetPage = false, bool append = false}) async {
+    if (resetPage) {
+      _errorLogsPage = 1;
+      errorLogs = [];
+    }
     setState(() => _errorLogsLoading = true);
     try {
       final r = await ApiService.fetchErrorLogsPaginated(
@@ -2098,7 +3003,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       );
       if (!mounted) return;
       setState(() {
-        errorLogs = r['items'] as List<dynamic>;
+        final items = r['items'] as List<dynamic>;
+        errorLogs = append ? [...errorLogs, ...items] : items;
         final meta = r['meta'];
         if (meta is Map) {
           _applyErrorLogsMeta(Map<String, dynamic>.from(meta));
@@ -2111,63 +3017,202 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     }
   }
 
+  Future<void> _loadMoreErrorLogs() async {
+    if (_errorLogsLoading || _errorLogsPage >= _errorLogsLastPage) return;
+    setState(() => _errorLogsLoading = true);
+    _errorLogsPage++;
+    await _reloadErrorLogs(append: true);
+  }
+
+  Future<void> _pickErrorDate(TextEditingController controller) async {
+    final now = DateTime.now();
+    DateTime initial = now;
+    final raw = controller.text.trim();
+    if (raw.isNotEmpty) {
+      initial = DateTime.tryParse(raw) ?? now;
+    }
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(now.year + 2),
+      builder: (context, child) {
+        if (child == null) return const SizedBox.shrink();
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+                  surface: _panelBg,
+                ),
+          ),
+          child: child,
+        );
+      },
+    );
+    if (picked == null) return;
+    final formatted =
+        "${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
+    setState(() => controller.text = formatted);
+  }
+
+  Widget _errorFilterField({
+    required TextEditingController controller,
+    required String hint,
+    IconData? icon,
+    double width = 180,
+    VoidCallback? onTap,
+    bool readOnly = false,
+  }) {
+    return SizedBox(
+      width: width,
+      child: TextField(
+        controller: controller,
+        readOnly: readOnly,
+        onTap: onTap,
+        style: TextStyle(
+          color: _mainText,
+          fontWeight: FontWeight.w600,
+          fontSize: 13,
+        ),
+        decoration: InputDecoration(
+          hintText: hint,
+          isDense: true,
+          filled: true,
+          fillColor: _pageBg,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          hintStyle: TextStyle(color: _mutedText, fontWeight: FontWeight.w500),
+          prefixIcon:
+              icon == null ? null : Icon(icon, size: 18, color: _mutedText),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: _panelBorder),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: _panelBorder),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: primaryBrand, width: 1.5),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildErrorLogsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            DropdownButton<String>(
-              value: _errorSeverity,
-              items: const [
-                DropdownMenuItem(value: 'all', child: Text('All severities')),
-                DropdownMenuItem(value: 'critical', child: Text('critical')),
-                DropdownMenuItem(value: 'error', child: Text('error')),
-                DropdownMenuItem(value: 'warning', child: Text('warning')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                setState(() => _errorSeverity = v);
-              },
-            ),
-            SizedBox(
-              width: 140,
-              child: TextField(
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _panelBg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _panelBorder),
+          ),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 180,
+                child: DropdownButtonFormField<String>(
+                  value: _errorSeverity,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    filled: true,
+                    fillColor: _pageBg,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: _panelBorder),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: _panelBorder),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(12)),
+                      borderSide: BorderSide(color: primaryBrand, width: 1.5),
+                    ),
+                  ),
+                  dropdownColor: _panelBg,
+                  style: TextStyle(color: _mainText, fontWeight: FontWeight.w600),
+                  items: const [
+                    DropdownMenuItem(value: 'all', child: Text('All severities')),
+                    DropdownMenuItem(value: 'critical', child: Text('Critical')),
+                    DropdownMenuItem(value: 'error', child: Text('Error')),
+                    DropdownMenuItem(value: 'warning', child: Text('Warning')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _errorSeverity = v);
+                  },
+                ),
+              ),
+              _errorFilterField(
                 controller: _errorTypeController,
-                decoration: const InputDecoration(
-                  hintText: 'Error type',
-                  isDense: true,
-                ),
+                hint: 'Error type',
+                icon: Icons.bug_report_outlined,
+                width: 180,
               ),
-            ),
-            SizedBox(
-              width: 120,
-              child: TextField(
+              _errorFilterField(
                 controller: _errorStartController,
-                decoration: const InputDecoration(
-                  hintText: 'Start YYYY-MM-DD',
-                  isDense: true,
-                ),
+                hint: 'Start date',
+                icon: Icons.calendar_month_outlined,
+                width: 150,
+                readOnly: true,
+                onTap: () => _pickErrorDate(_errorStartController),
               ),
-            ),
-            SizedBox(
-              width: 120,
-              child: TextField(
+              _errorFilterField(
                 controller: _errorEndController,
-                decoration: const InputDecoration(
-                  hintText: 'End YYYY-MM-DD',
-                  isDense: true,
+                hint: 'End date',
+                icon: Icons.event_outlined,
+                width: 150,
+                readOnly: true,
+                onTap: () => _pickErrorDate(_errorEndController),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _errorSeverity = 'all';
+                    _errorTypeController.clear();
+                    _errorStartController.clear();
+                    _errorEndController.clear();
+                  });
+                  _reloadErrorLogs(resetPage: true);
+                },
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Reset'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                  side: BorderSide(color: _panelBorder),
+                  foregroundColor: _mainText,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  backgroundColor: _pageBg,
                 ),
               ),
-            ),
-            ElevatedButton(
-              onPressed: () => _reloadErrorLogs(resetPage: true),
-              child: const Text('Apply filters'),
-            ),
-          ],
+              ElevatedButton.icon(
+                onPressed: () => _reloadErrorLogs(resetPage: true),
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                label: const Text('Apply Filters'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                  backgroundColor: primaryBrand,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         if (_errorLogsLoading) ...[
           const SizedBox(height: 8),
@@ -2181,55 +3226,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   Widget _buildErrorLogsPagination() {
     if (_errorLogsTotal <= 0) return const SizedBox.shrink();
-    final start = (_errorLogsPage - 1) * _kErrorLogsPerPage + 1;
-    final end = (_errorLogsPage - 1) * _kErrorLogsPerPage + errorLogs.length;
     return Padding(
       padding: const EdgeInsets.only(top: 16),
-      child: Row(
-        children: [
-          Text(
-            '$start–$end of $_errorLogsTotal',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: textMuted,
-            ),
-          ),
-          const Spacer(),
-          if (_errorLogsLastPage > 1) ...[
-            IconButton(
-              tooltip: 'Previous page',
-              icon: const Icon(Icons.chevron_left_rounded),
-              onPressed: _errorLogsLoading || _errorLogsPage <= 1
-                  ? null
-                  : () {
-                      setState(() => _errorLogsPage--);
-                      _reloadErrorLogs();
-                    },
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                'Page $_errorLogsPage of $_errorLogsLastPage',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                  color: textMain,
-                ),
-              ),
-            ),
-            IconButton(
-              tooltip: 'Next page',
-              icon: const Icon(Icons.chevron_right_rounded),
-              onPressed: _errorLogsLoading || _errorLogsPage >= _errorLogsLastPage
-                  ? null
-                  : () {
-                      setState(() => _errorLogsPage++);
-                      _reloadErrorLogs();
-                    },
-            ),
-          ],
-        ],
+      child: _buildStandardPaginationBar(
+        summary: "Loaded ${errorLogs.length} of $_errorLogsTotal system errors",
+        pageLabel: "$_errorLogsPage/$_errorLogsLastPage",
+        actionLabel: _errorLogsPage < _errorLogsLastPage ? "Load More" : null,
+        onAction: _loadMoreErrorLogs,
+        actionLoading: _errorLogsLoading,
       ),
     );
   }
@@ -2242,44 +3246,60 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       );
     }
     return Column(
-      children: performanceMetrics.map((row) {
-        final sevColor = (row['duration_ms'] as int? ?? 0) > 1500
-            ? warningAmber
-            : successEmerald;
-        return Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: surfaceWhite,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: borderLight),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.timeline, color: sevColor, size: 18),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${row['kind'] ?? ''} · ${row['name'] ?? ''}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13,
+      children: [
+        ...performanceMetrics.map((row) {
+          final sevColor = (row['duration_ms'] as int? ?? 0) > 1500
+              ? warningAmber
+              : successEmerald;
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _panelBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _panelBorder),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.timeline, color: sevColor, size: 18),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${row['kind'] ?? ''} · ${row['name'] ?? ''}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          color: _mainText,
+                        ),
                       ),
-                    ),
-                    Text(
-                      '${row['duration_ms'] ?? 0} ms · ${row['user_email'] ?? row['user_name'] ?? 'guest'}',
-                      style: const TextStyle(fontSize: 11, color: textMuted),
-                    ),
-                  ],
+                      Text(
+                        '${row['duration_ms'] ?? 0} ms · ${row['user_email'] ?? row['user_name'] ?? 'guest'}',
+                        style: TextStyle(fontSize: 11, color: _mutedText),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
+          );
+        }).toList(growable: false),
+        if (_performanceLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(minHeight: 2),
           ),
-        );
-      }).toList(),
+        const SizedBox(height: 6),
+        _buildStandardPaginationBar(
+          summary: "Loaded ${performanceMetrics.length} of $_performanceTotal metrics",
+          pageLabel: "$_performancePage/$_performanceLastPage",
+          actionLabel: _performancePage < _performanceLastPage ? "Load More" : null,
+          onAction: _loadMorePerformanceMetrics,
+          actionLoading: _performanceLoadingMore,
+        ),
+      ],
     );
   }
 
@@ -2408,118 +3428,270 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     }
   }
 
+  void _openAdminSettings() {
+    final cs = Theme.of(context).colorScheme;
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: _panelBg,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            "Admin Settings",
+            style: TextStyle(fontWeight: FontWeight.w900, color: _mainText),
+          ),
+          content: Consumer<ThemeNotifier>(
+            builder: (context, tn, _) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Appearance",
+                    style: TextStyle(
+                      color: _mutedText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment<ThemeMode>(
+                        value: ThemeMode.light,
+                        icon: Icon(Icons.light_mode_rounded),
+                        label: Text("Light"),
+                      ),
+                      ButtonSegment<ThemeMode>(
+                        value: ThemeMode.dark,
+                        icon: Icon(Icons.dark_mode_rounded),
+                        label: Text("Dark"),
+                      ),
+                    ],
+                    selected: {tn.mode == ThemeMode.system ? ThemeMode.light : tn.mode},
+                    onSelectionChanged: (value) {
+                      final selected = value.first;
+                      tn.setMode(selected);
+                    },
+                    style: ButtonStyle(
+                      backgroundColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.selected)) {
+                          return cs.primary.withOpacity(0.18);
+                        }
+                        return _pageBg;
+                      }),
+                      foregroundColor: WidgetStatePropertyAll(_mainText),
+                      side: WidgetStatePropertyAll(BorderSide(color: _panelBorder)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    "Default app theme is now Light mode.",
+                    style: TextStyle(color: _mutedText, fontSize: 12),
+                  ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text("Close", style: TextStyle(color: _mutedText)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openAutoTagTool() async {
+    final nameController = TextEditingController();
+    final ingredientsController = TextEditingController();
+    final instructionsController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: _panelBg,
+          title: Text(
+            'AI Auto-Tag Tool',
+            style: TextStyle(color: _mainText, fontWeight: FontWeight.w900),
+          ),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildDialogTextField(
+                  label: 'Recipe name',
+                  icon: Icons.restaurant_menu_rounded,
+                  controller: nameController,
+                ),
+                const SizedBox(height: 10),
+                _buildDialogTextField(
+                  label: 'Ingredients (comma separated)',
+                  icon: Icons.set_meal_rounded,
+                  controller: ingredientsController,
+                ),
+                const SizedBox(height: 10),
+                _buildDialogTextField(
+                  label: 'Instructions (short)',
+                  icon: Icons.notes_rounded,
+                  controller: instructionsController,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Close', style: TextStyle(color: _mutedText)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                try {
+                  final ingredients = ingredientsController.text
+                      .split(',')
+                      .map((e) => e.trim())
+                      .where((e) => e.isNotEmpty)
+                      .toList();
+                  final out = await ApiService.adminAutoTagRecipe(
+                    name: nameController.text.trim(),
+                    instructions: instructionsController.text.trim(),
+                    ingredients: ingredients,
+                  );
+                  if (!mounted) return;
+                  final data = Map<String, dynamic>.from(
+                    out['data'] as Map? ?? <String, dynamic>{},
+                  );
+                  _showSnackBar(
+                    "AI suggestion: ${data['category'] ?? '-'} • ${data['difficulty'] ?? '-'} • ~${data['cooking_time'] ?? '-'} min",
+                  );
+                } catch (e) {
+                  _showSnackBar('Auto-tag failed: $e', isError: true);
+                }
+              },
+              child: const Text('Generate'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
-      decoration: const BoxDecoration(
-        color: surfaceWhite,
-        border: Border(bottom: BorderSide(color: borderLight)),
+      padding: const EdgeInsets.fromLTRB(40, 22, 40, 18),
+      decoration: BoxDecoration(
+        color: _panelBg,
+        border: Border(bottom: BorderSide(color: _panelBorder)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
+          Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                _currentHeaderTitle,
-                style: const TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  color: textMain,
-                  letterSpacing: -0.5,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _currentHeaderTitle,
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        color: _mainText,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _currentHeaderSubtitle,
+                      style: TextStyle(
+                        color: _mutedText,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                _currentHeaderSubtitle,
-                style: const TextStyle(
-                  color: textMuted,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
+              const SizedBox(width: 16),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _headerIconAction(
+                    tooltip: "Admin Settings",
+                    icon: Icons.settings_rounded,
+                    onPressed: _openAdminSettings,
+                  ),
+                  const SizedBox(width: 8),
+                  _headerIconAction(
+                    tooltip: "Refresh Data",
+                    icon: Icons.sync_rounded,
+                    onPressed: () {
+                      loadData();
+                      _showSnackBar("Dashboard updated.");
+                    },
+                  ),
+                ],
               ),
             ],
           ),
-          const Spacer(),
-          Container(
-            margin: const EdgeInsets.only(right: 12),
-            decoration: BoxDecoration(
-              color: surfaceWhite,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: borderLight),
-            ),
-            child: IconButton(
-              onPressed: () {
-                loadData();
-                _showSnackBar("Dashboard updated.");
-              },
-              icon: const Icon(Icons.sync_rounded, color: textMuted, size: 20),
-              tooltip: "Refresh Data",
-            ),
-          ),
-          // 🌿 ADDED: Add Ingredient Button
-          ElevatedButton.icon(
-            onPressed: _showAddIngredientDialog,
-            icon: const Icon(Icons.set_meal_rounded, size: 18),
-            label: const Text(
-              "Add Ingredient",
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: surfaceWhite,
-              foregroundColor: textMain,
-              elevation: 0,
-              side: const BorderSide(color: borderLight),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const CreateUserScreen()),
-            ).then((_) => loadData()),
-            icon: const Icon(Icons.person_add_rounded, size: 18),
-            label: const Text(
-              "New User",
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: surfaceWhite,
-              foregroundColor: textMain,
-              elevation: 0,
-              side: const BorderSide(color: borderLight),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const RecipeFormScreen()),
-            ).then((_) => loadData()),
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text(
-              "Add Recipe",
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryBrand,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
         ],
+      ),
+    );
+  }
+
+  Widget _headerIconAction({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _panelBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _panelBorder),
+      ),
+      child: IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon, color: _mutedText, size: 19),
+        tooltip: tooltip,
+        style: IconButton.styleFrom(
+          padding: const EdgeInsets.all(10),
+          minimumSize: const Size(40, 40),
+        ),
+      ),
+    );
+  }
+
+  Widget _headerActionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+    bool isPrimary = false,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 15),
+      label: Text(
+        label,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isPrimary ? primaryBrand : _panelBg,
+        foregroundColor: isPrimary ? Colors.white : _mainText,
+        elevation: 0,
+        side: isPrimary ? null : BorderSide(color: _panelBorder),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        minimumSize: const Size(0, 40),
+        textStyle: const TextStyle(fontSize: 13),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(9),
+        ),
       ),
     );
   }
@@ -2561,12 +3733,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         margin: const EdgeInsets.only(right: 24),
         padding: const EdgeInsets.all(28),
         decoration: BoxDecoration(
-          color: surfaceWhite,
+          color: _panelBg,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: borderLight),
+          border: Border.all(color: _panelBorder),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.02),
+              color: _isDark
+                  ? Colors.black.withOpacity(0.25)
+                  : Colors.black.withOpacity(0.02),
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),
@@ -2586,18 +3760,18 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             const SizedBox(height: 24),
             Text(
               value.toString(),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.w900,
-                color: textMain,
+                color: _mainText,
                 letterSpacing: -1,
               ),
             ),
             const SizedBox(height: 4),
             Text(
               title,
-              style: const TextStyle(
-                color: textMuted,
+              style: TextStyle(
+                color: _mutedText,
                 fontWeight: FontWeight.w700,
                 fontSize: 13,
                 letterSpacing: 0.5,
@@ -2611,89 +3785,155 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   Widget _buildSidebar() {
     return Container(
-      width: 280,
-      color: darkSlate,
+      width: 272,
+      color: _sidebarBg,
       child: Column(
         children: [
-          const SizedBox(height: 48),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: surfaceWhite.withOpacity(0.05),
-              shape: BoxShape.circle,
-            ),
-            child: const CircleAvatar(
-              backgroundColor: primaryBrand,
-              radius: 26,
-              child: Icon(
-                Icons.rocket_launch_rounded,
-                color: Colors.white,
-                size: 26,
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.only(top: 28),
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                      decoration: BoxDecoration(
+                        color: _sidebarText.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _sidebarText.withOpacity(0.10)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: primaryBrand.withOpacity(0.16),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              Icons.restaurant_menu_rounded,
+                              color: primaryBrandLight,
+                              size: 18,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "Core Admin",
+                                  style: TextStyle(
+                                    color: _sidebarText,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  "System online",
+                                  style: TextStyle(
+                                    color: successEmerald,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 26),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "NAVIGATION",
+                          style: TextStyle(
+                            color: _sidebarText.withOpacity(0.5),
+                            fontSize: 10.5,
+                            letterSpacing: 0.9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _navItem(
+                          Icons.grid_view_rounded,
+                          "Insights",
+                          _selectedIndex == 0,
+                          () => setState(() => _selectedIndex = 0),
+                        ),
+                        _navItem(
+                          Icons.group_rounded,
+                          "User Directory",
+                          _selectedIndex == 1,
+                          () => setState(() => _selectedIndex = 1),
+                        ),
+                        _navItem(
+                          Icons.restaurant_menu_rounded,
+                          "Recipe Library",
+                          _selectedIndex == 2,
+                          () => setState(() => _selectedIndex = 2),
+                        ),
+                        const SizedBox(height: 16),
+                        Divider(color: _sidebarText.withOpacity(0.10), height: 1),
+                        const SizedBox(height: 14),
+                        Text(
+                          "QUICK ACTIONS",
+                          style: TextStyle(
+                            color: _sidebarText.withOpacity(0.5),
+                            fontSize: 10.5,
+                            letterSpacing: 0.9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _sidebarActionButton(
+                          icon: Icons.set_meal_rounded,
+                          label: "Add Ingredient",
+                          onTap: _showAddIngredientDialog,
+                        ),
+                        _sidebarActionButton(
+                          icon: Icons.person_add_rounded,
+                          label: "New User",
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const CreateUserScreen()),
+                          ).then((_) => loadData()),
+                        ),
+                        _sidebarActionButton(
+                          icon: Icons.auto_awesome_rounded,
+                          label: "AI Auto-Tag",
+                          onTap: _openAutoTagTool,
+                        ),
+                        _sidebarActionButton(
+                          icon: Icons.add_rounded,
+                          label: "Add Recipe",
+                          isPrimary: true,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const RecipeFormScreen()),
+                          ).then((_) => loadData()),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 20),
-          const Text(
-            "CORE ADMIN",
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 2,
-              fontSize: 15,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: successEmerald.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Text(
-              "System Online",
-              style: TextStyle(
-                color: successEmerald,
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ),
-          const SizedBox(height: 48),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              children: [
-                _navItem(
-                  Icons.grid_view_rounded,
-                  "Insights",
-                  _selectedIndex == 0,
-                  () => setState(() => _selectedIndex = 0),
-                ),
-                _navItem(
-                  Icons.group_rounded,
-                  "User Directory",
-                  _selectedIndex == 1,
-                  () => setState(() => _selectedIndex = 1),
-                ),
-                _navItem(
-                  Icons.restaurant_menu_rounded,
-                  "Recipe Library",
-                  _selectedIndex == 2,
-                  () => setState(() => _selectedIndex = 2),
-                ),
-              ],
-            ),
-          ),
-          const Spacer(),
           Padding(
             padding: const EdgeInsets.all(20),
-            child: ListTile(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              hoverColor: dangerRed.withOpacity(0.1),
-              onTap: () async {
+            child: TextButton.icon(
+              onPressed: () async {
                 await ApiService.logout();
                 if (!mounted) return;
                 Navigator.pushReplacement(
@@ -2701,17 +3941,80 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   MaterialPageRoute(builder: (_) => const LoginScreen()),
                 );
               },
-              leading: const Icon(
-                Icons.power_settings_new_rounded,
-                color: dangerRed,
-              ),
-              title: const Text(
+              icon: const Icon(Icons.power_settings_new_rounded, size: 18),
+              label: const Text(
                 "Sign Out",
-                style: TextStyle(color: dangerRed, fontWeight: FontWeight.w700),
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: dangerRed,
+                minimumSize: const Size(double.infinity, 44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                backgroundColor: dangerRed.withOpacity(0.08),
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _sidebarActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool isPrimary = false,
+  }) {
+    if (isPrimary) {
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 4),
+        child: ElevatedButton.icon(
+          onPressed: onTap,
+          icon: const Icon(Icons.add_rounded, size: 16),
+          label: const Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              "Add Recipe",
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: primaryBrand,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            minimumSize: const Size(0, 42),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 2),
+      child: ListTile(
+        dense: true,
+        visualDensity: const VisualDensity(vertical: -2),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        leading: Icon(icon, size: 16, color: _sidebarText.withOpacity(0.86)),
+        title: Text(
+          label,
+          style: TextStyle(
+            color: _sidebarText.withOpacity(0.93),
+            fontSize: 12.8,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        trailing: Icon(
+          Icons.chevron_right_rounded,
+          size: 16,
+          color: _sidebarText.withOpacity(0.45),
+        ),
+        onTap: onTap,
       ),
     );
   }
@@ -2722,28 +4025,46 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     bool active,
     VoidCallback onTap,
   ) {
+    final iconColor = active
+        ? primaryBrandLight
+        : _sidebarText.withOpacity(_isDark ? 0.7 : 0.54);
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 4),
       decoration: BoxDecoration(
-        color: active ? primaryBrand.withOpacity(0.15) : Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
+        gradient: active
+            ? LinearGradient(
+                colors: [
+                  primaryBrand.withOpacity(0.18),
+                  primaryBrand.withOpacity(0.03),
+                ],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              )
+            : null,
+        color: active ? null : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: active ? primaryBrand.withOpacity(0.2) : Colors.transparent,
+          color: active ? primaryBrand.withOpacity(0.30) : Colors.transparent,
         ),
       ),
       child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        dense: true,
+        visualDensity: const VisualDensity(vertical: -1),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         leading: Icon(
           icon,
-          color: active ? primaryBrandLight : Colors.white54,
-          size: 22,
+          color: iconColor,
+          size: 18,
         ),
         title: Text(
           label,
           style: TextStyle(
-            color: active ? Colors.white : Colors.white54,
+            color: active
+                ? _sidebarText
+                : _sidebarText.withOpacity(_isDark ? 0.7 : 0.54),
             fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-            fontSize: 14,
+            fontSize: 13,
           ),
         ),
         onTap: onTap,
@@ -2761,8 +4082,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             const SizedBox(height: 16),
             Text(
               message,
-              style: const TextStyle(
-                color: textMuted,
+              style: TextStyle(
+                color: _mutedText,
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),

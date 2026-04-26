@@ -20,6 +20,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   Recipe? recipe;
   bool loading = true;
   int? userRating;
+  bool _isCreatingCollection = false;
 
   // --- MODERN TEAL & ZINC PALETTE ---
   static const Color primaryBrand = Color(0xFF0D9488);
@@ -63,6 +64,9 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         'id': recipe.id,
         'name': recipe.name,
         'imageUrl': recipe.imageUrl,
+        'image_urls': recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
+            ? [recipe.imageUrl]
+            : <String>[],
         'category': recipe.category,
       },
       ...old,
@@ -81,6 +85,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       if (!mounted) return;
       setState(() {
         recipe = data;
+        userRating = data.userRating ?? userRating;
         loading = false;
       });
       await _persistRecentSnapshot(data);
@@ -92,12 +97,14 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Future<void> submitRating(int rating) async {
+    final previous = userRating;
     setState(() => userRating = rating);
 
     try {
       await ApiService.rateRecipe(widget.recipeId, rating);
 
       ApiService.clearCache('recipe_${widget.recipeId}');
+      ApiService.clearCache('recipes_all');
 
       if (!mounted) return;
       _showSnackBar("Thanks for your feedback!");
@@ -105,20 +112,21 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       _showSnackBar("Failed to submit rating.", isError: true);
-      setState(() => userRating = null);
+      setState(() => userRating = previous);
     }
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
+    final cs = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
         width: 400,
-        backgroundColor: isError ? Colors.redAccent : darkSlate,
+        backgroundColor: isError ? Colors.redAccent : cs.inverseSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         content: Text(
           message,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: TextStyle(fontWeight: FontWeight.w600, color: cs.onInverseSurface),
         ),
       ),
     );
@@ -126,9 +134,10 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     if (loading) {
       return Scaffold(
-        backgroundColor: bgSoft,
+        backgroundColor: cs.surface,
         body: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
@@ -140,7 +149,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                   Container(
                     height: 220,
                     decoration: BoxDecoration(
-                      color: borderLight,
+                      color: cs.surfaceContainerHigh,
                       borderRadius: BorderRadius.circular(24),
                     ),
                   ),
@@ -149,7 +158,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                     height: 28,
                     width: double.infinity,
                     decoration: BoxDecoration(
-                      color: borderLight,
+                      color: cs.surfaceContainerHigh,
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
@@ -158,7 +167,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                     height: 18,
                     width: 180,
                     decoration: BoxDecoration(
-                      color: borderLight.withOpacity(0.85),
+                      color: cs.surfaceContainerHigh.withOpacity(0.85),
                       borderRadius: BorderRadius.circular(6),
                     ),
                   ),
@@ -174,19 +183,19 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
     if (recipe == null) {
       return Scaffold(
-        backgroundColor: bgSoft,
+        backgroundColor: cs.surface,
         appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
-        body: const Center(
+        body: Center(
           child: Text(
             "Recipe not found.",
-            style: TextStyle(color: textMuted, fontWeight: FontWeight.w600),
+            style: TextStyle(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor: bgSoft,
+      backgroundColor: cs.surface,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -195,16 +204,16 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
           padding: const EdgeInsets.all(8.0),
           child: Container(
             decoration: BoxDecoration(
-              color: surfaceWhite.withOpacity(0.9),
+              color: cs.surfaceContainerHigh.withOpacity(0.9),
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8),
               ],
             ),
             child: IconButton(
-              icon: const Icon(
+              icon: Icon(
                 Icons.arrow_back_rounded,
-                color: textMain,
+                color: cs.onSurface,
                 size: 20,
               ),
               onPressed: () => Navigator.pop(context),
@@ -223,8 +232,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 800),
                   child: Container(
-                    decoration: const BoxDecoration(
-                      color: bgSoft,
+                    decoration: BoxDecoration(
+                      color: cs.surface,
                       borderRadius: BorderRadius.vertical(
                         top: Radius.circular(32),
                       ),
@@ -242,10 +251,10 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                           const SizedBox(height: 16),
                           Text(
                             recipe!.name,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 32,
                               fontWeight: FontWeight.w900,
-                              color: textMain,
+                              color: cs.onSurface,
                               letterSpacing: -1,
                               height: 1.1,
                             ),
@@ -280,9 +289,9 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                           const SizedBox(height: 20),
                           Text(
                             recipe!.instructions,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 16,
-                              color: textMain,
+                              color: cs.onSurface,
                               height: 1.7,
                               fontWeight: FontWeight.w500,
                             ),
@@ -302,10 +311,11 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Widget _buildRecipeImage(String? imageUrl) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       height: 400,
       width: double.infinity,
-      decoration: const BoxDecoration(color: borderLight),
+      decoration: BoxDecoration(color: cs.surfaceContainerHigh),
       child: imageUrl != null && imageUrl.isNotEmpty
           ? CachedNetworkImage(
               imageUrl: imageUrl,
@@ -313,21 +323,22 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
               placeholder: (context, url) => const Center(
                 child: CircularProgressIndicator(color: primaryBrand),
               ),
-              errorWidget: (context, url, error) => const Icon(
+              errorWidget: (context, url, error) => Icon(
                 Icons.restaurant_menu_rounded,
                 size: 80,
-                color: textMuted,
+                color: cs.onSurfaceVariant,
               ),
             )
-          : const Icon(
+          : Icon(
               Icons.restaurant_menu_rounded,
               size: 80,
-              color: textMuted,
+              color: cs.onSurfaceVariant,
             ),
     );
   }
 
   Widget _buildSuccessOutlook() {
+    final cs = Theme.of(context).colorScheme;
     final score = recipe!.successScore!;
     final label = recipe!.successLabel ?? '';
     final diff = recipe!.difficulty;
@@ -340,9 +351,9 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
-        color: surfaceWhite,
+        color: cs.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: borderLight),
+        border: Border.all(color: cs.outlineVariant),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -353,7 +364,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                 ? primaryBrand
                 : challenging
                     ? warningAmber
-                    : textMuted,
+                    : cs.onSurfaceVariant,
             size: 26,
           ),
           const SizedBox(width: 14),
@@ -366,17 +377,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
-                    color: textMuted,
+                    color: cs.onSurfaceVariant,
                     letterSpacing: 1,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
                   label.isNotEmpty ? label : 'Estimated fit',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w900,
-                    color: textMain,
+                    color: cs.onSurface,
                   ),
                 ),
                 if (diff != null || mins != null) ...[
@@ -386,10 +397,10 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                       if (diff != null) diff,
                       if (mins != null) '~$mins min',
                     ].join(' · '),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: textMuted,
+                      color: cs.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -436,16 +447,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Widget _buildAverageRating(double? rating) {
+    final cs = Theme.of(context).colorScheme;
     return Row(
       children: [
         const Icon(Icons.star_rounded, color: warningAmber, size: 22),
         const SizedBox(width: 6),
         Text(
           rating != null ? rating.toStringAsFixed(1) : "N/A",
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w900,
             fontSize: 18,
-            color: textMain,
+            color: cs.onSurface,
           ),
         ),
       ],
@@ -453,22 +465,23 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Widget _buildRatingCard() {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: surfaceWhite,
+        color: cs.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: borderLight),
+        border: Border.all(color: cs.outlineVariant),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             "Rate this discovery",
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w800,
-              color: textMain,
+              color: cs.onSurface,
             ),
           ),
           const SizedBox(height: 16),
@@ -483,7 +496,9 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                   padding: const EdgeInsets.all(4),
                   child: Icon(
                     isFilled ? Icons.star_rounded : Icons.star_outline_rounded,
-                    color: isFilled ? warningAmber : textMuted.withOpacity(0.3),
+                    color: isFilled
+                        ? warningAmber
+                        : cs.onSurfaceVariant.withOpacity(0.35),
                     size: 42,
                   ),
                 ),
@@ -496,6 +511,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Widget _buildSectionHeader(String title) {
+    final cs = Theme.of(context).colorScheme;
     return Row(
       children: [
         Container(
@@ -509,10 +525,10 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         const SizedBox(width: 16),
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w900,
-            color: textMain,
+            color: cs.onSurface,
           ),
         ),
       ],
@@ -520,12 +536,13 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Widget _buildIngredientsList() {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
-        color: surfaceWhite,
+        color: cs.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: borderLight),
+        border: Border.all(color: cs.outlineVariant),
       ),
       child: Column(
         children: recipe!.ingredients.map((ingredient) {
@@ -547,9 +564,9 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                 Expanded(
                   child: Text(
                     ingredient,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
-                      color: textMain,
+                      color: cs.onSurface,
                       fontWeight: FontWeight.w600,
                       height: 1.4,
                     ),
@@ -571,7 +588,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        backgroundColor: Colors.white,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
@@ -605,15 +622,22 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                         title: Text(c['name']),
                         onTap: () async {
                           try {
-                            await ApiService.addToCollection(
+                            final duplicate = await ApiService.addToCollection(
                               c['id'],
                               widget.recipeId,
                             );
                             if (!mounted) return;
                             Navigator.pop(context);
-                            _showSnackBar("Saved to ${c['name']}!");
+                            _showSnackBar(
+                              duplicate
+                                  ? "Already in ${c['name']}."
+                                  : "Saved to ${c['name']}!",
+                            );
                           } catch (e) {
-                            _showSnackBar("Could not save.", isError: true);
+                            _showSnackBar(
+                              e.toString().replaceFirst(RegExp(r'^Exception:\s*'), ''),
+                              isError: true,
+                            );
                           }
                         },
                       ),
@@ -621,6 +645,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                     const Divider(),
                     TextField(
                       controller: controller,
+                      onChanged: (_) => setModalState(() {}),
                       decoration: const InputDecoration(
                         hintText: "Create new folder...",
                         prefixIcon: Icon(Icons.create_new_folder_outlined),
@@ -630,33 +655,56 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: () async {
-                          if (controller.text.isEmpty) return;
+                        onPressed: _isCreatingCollection
+                            ? null
+                            : () async {
+                          final name = controller.text.trim();
+                          if (name.isEmpty) {
+                            _showSnackBar("Folder name is required.", isError: true);
+                            return;
+                          }
+                          if (name.length < 2) {
+                            _showSnackBar("Folder name is too short.", isError: true);
+                            return;
+                          }
+                          setModalState(() => _isCreatingCollection = true);
                           try {
                             // 1. Create Folder
-                            await ApiService.createCollection(controller.text);
+                            await ApiService.createCollection(name);
                             // 2. Refresh list to get ID
                             List updated = await ApiService.getCollections();
                             final newCol = updated.firstWhere(
-                              (c) => c['name'] == controller.text,
+                              (c) => c['name'] == name,
                             );
                             // 3. Auto-save current recipe
-                            await ApiService.addToCollection(
+                            final duplicate = await ApiService.addToCollection(
                               newCol['id'],
                               widget.recipeId,
                             );
 
                             if (!mounted) return;
                             Navigator.pop(context);
-                            _showSnackBar("Created and saved!");
+                            _showSnackBar(
+                              duplicate ? "Collection created. Recipe already saved." : "Created and saved!",
+                            );
                           } catch (e) {
                             _showSnackBar(
-                              "Failed to create folder.",
+                              e.toString().replaceFirst(RegExp(r'^Exception:\s*'), ''),
                               isError: true,
                             );
+                          } finally {
+                            if (mounted) {
+                              setModalState(() => _isCreatingCollection = false);
+                            }
                           }
                         },
-                        child: const Text("Create and Save"),
+                        child: _isCreatingCollection
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text("Create and Save"),
                       ),
                     ),
                   ],

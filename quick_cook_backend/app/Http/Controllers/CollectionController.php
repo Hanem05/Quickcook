@@ -74,12 +74,14 @@ class CollectionController extends Controller
             return response()->json(['error' => 'Collection not found'], 404);
         }
 
-        $collection->recipes()->syncWithoutDetaching([
-            (int) $request->recipe_id,
-        ]);
+        $recipeId = (int) $request->recipe_id;
+        $already = $collection->recipes()->where('recipes.id', $recipeId)->exists();
+
+        $collection->recipes()->syncWithoutDetaching([$recipeId]);
 
         return response()->json([
-            'message' => 'Recipe added successfully',
+            'message' => $already ? 'Recipe already exists in this collection' : 'Recipe added successfully',
+            'duplicate' => $already,
         ]);
     }
 

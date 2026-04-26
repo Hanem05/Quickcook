@@ -55,4 +55,32 @@ class NotificationService {
       debugPrint('NotificationService: $e');
     }
   }
+
+  /// Sprint 9: lightweight behavior-based smart alert (once/day per message key).
+  static Future<void> maybeShowSmartMessage({
+    required String title,
+    required String body,
+    required String key,
+  }) async {
+    if (!_ready) await init();
+    final p = await SharedPreferences.getInstance();
+    final today = DateTime.now().toIso8601String().split('T').first;
+    final guardKey = 'notif_smart_${key}_$today';
+    if (p.getBool(guardKey) == true) return;
+    await p.setBool(guardKey, true);
+
+    const android = AndroidNotificationDetails(
+      'quickcook_smart',
+      'Smart cooking insights',
+      channelDescription: 'Behavior-based and personalized reminders',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+    );
+    const details = NotificationDetails(android: android, iOS: DarwinNotificationDetails());
+    try {
+      await _plugin.show(2, title, body, details);
+    } catch (e) {
+      debugPrint('NotificationService smart: $e');
+    }
+  }
 }

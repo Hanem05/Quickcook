@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import '../models/ingredient.dart';
 import '../models/recipe.dart';
 import '../models/admin_stats.dart';
@@ -10,11 +13,34 @@ import 'package:flutter/foundation.dart';
 import 'connectivity_service.dart';
 import 'offline_cache_service.dart';
 import 'performance_reporter.dart';
+import 'app_logger.dart';
 
 class ApiService {
   static String? token;
+  static const Duration _httpTimeout = Duration(seconds: 6);
 
   static final Map<String, dynamic> _cache = {};
+  static Future<List<Recipe>>? _recipesInFlight;
+  static DateTime? _recipesFetchedAt;
+  static const Duration _recipesCacheTtl = Duration(minutes: 2);
+
+  static Future<Uint8List> _prepareRecipeImageBytes(XFile file) async {
+    final original = await file.readAsBytes();
+    if (kIsWeb || original.lengthInBytes <= 1024 * 1024) return original;
+    try {
+      final compressed = await FlutterImageCompress.compressWithList(
+        original,
+        minWidth: 1280,
+        minHeight: 1280,
+        quality: 80,
+        format: CompressFormat.jpeg,
+      );
+      if (compressed.isNotEmpty && compressed.lengthInBytes < original.lengthInBytes) {
+        return compressed;
+      }
+    } catch (_) {}
+    return original;
+  }
 
   static String? _readErrorMessage(String body) {
     try {
@@ -32,10 +58,17 @@ class ApiService {
     return null;
   }
   /// Production: `flutter build apk --dart-define=API_BASE_URL=https://your-host/api`
-  static const String baseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://192.168.1.2:8000/api',
-  );
+  static final String baseUrl = _resolveBaseUrl();
+
+  static String _resolveBaseUrl() {
+    const override = String.fromEnvironment('API_BASE_URL', defaultValue: '');
+    if (override.isNotEmpty) return override;
+    if (kIsWeb) return 'http://127.0.0.1:8000/api';
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://10.0.2.2:8000/api';
+    }
+    return 'http://127.0.0.1:8000/api';
+  }
 
   static Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -98,6 +131,7 @@ class ApiService {
         return {"success": false, "message": errorMsg};
       }
     } catch (e) {
+      await AppLogger.logApiError(endpoint: 'POST /login', error: e);
       return {"success": false, "message": "Cannot connect to server."};
     }
   }
@@ -138,12 +172,17 @@ class ApiService {
         return errorMsg; // Return the exact error text
       }
     } catch (e) {
+      await AppLogger.logApiError(endpoint: 'POST /register', error: e);
       return "Cannot connect to server.";
     }
   }
 
   static Future<void> logout() async {
-    await http.post(Uri.parse("$baseUrl/logout"), headers: await _getHeaders());
+    try {
+      await http.post(Uri.parse("$baseUrl/logout"), headers: await _getHeaders());
+    } catch (e) {
+      await AppLogger.logApiError(endpoint: 'POST /logout', error: e);
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
   }
@@ -155,6 +194,15 @@ class ApiService {
     }
 
     debugPrint("CACHE MISS: ingredients");
+    final rawCached = await OfflineCacheService.loadIngredientsJson();
+    if (rawCached != null && rawCached.isNotEmpty) {
+      try {
+        final data = jsonDecode(rawCached) as List<dynamic>;
+        final result = data.map((e) => Ingredient.fromJson(e)).toList();
+        _cache['ingredients'] = result;
+        return result;
+      } catch (_) {}
+    }
 
     final sw = Stopwatch()..start();
     try {
@@ -169,10 +217,12 @@ class ApiService {
         }
       }
 
-      final response = await http.get(
-        Uri.parse("$baseUrl/ingredients"),
-        headers: {"Accept": "application/json"},
-      );
+      final response = await http
+          .get(
+            Uri.parse("$baseUrl/ingredients"),
+            headers: {"Accept": "application/json"},
+          )
+          .timeout(_httpTimeout);
       sw.stop();
       await PerformanceReporter.onApiCall('GET /ingredients', sw.elapsedMilliseconds);
 
@@ -187,6 +237,7 @@ class ApiService {
       }
     } catch (e) {
       sw.stop();
+      await AppLogger.logApiError(endpoint: 'GET /ingredients', error: e);
       final raw = await OfflineCacheService.loadIngredientsJson();
       if (raw != null) {
         List data = jsonDecode(raw);
@@ -203,11 +254,16 @@ class ApiService {
   static Future<Map<String, dynamic>> matchRecipes(
     List<int> ingredientIds,
     int page,
-    String? category,
-  ) async {
+    String? category, {
+    String? difficulty,
+    int? maxCookingTime,
+  }) async {
     final body = {
       "ingredient_ids": ingredientIds,
       if (category != null) "category": category,
+      if (difficulty != null && difficulty.isNotEmpty) "difficulty": difficulty,
+      if (maxCookingTime != null && maxCookingTime > 0)
+        "max_cooking_time": maxCookingTime,
     };
     final response = await http.post(
       Uri.parse("$baseUrl/match-recipes?page=$page"),
@@ -355,9 +411,37 @@ class ApiService {
     return data.map((e) => Recipe.fromJson(e)).toList();
   }
 
-  static Future<List<Recipe>> fetchRecipes() async {
+  static Future<List<Recipe>> fetchRecipes({bool forceRefresh = false}) async {
+    if (!forceRefresh) {
+      final cached = _cache['recipes_all'];
+      if (cached is List<Recipe> &&
+          _recipesFetchedAt != null &&
+          DateTime.now().difference(_recipesFetchedAt!) < _recipesCacheTtl) {
+        debugPrint("CACHE HIT: recipes_all");
+        return cached;
+      }
+      if (_recipesInFlight != null) {
+        debugPrint("CACHE WAIT: recipes_all");
+        return _recipesInFlight!;
+      }
+    } else {
+      _cache.remove('recipes_all');
+      _recipesFetchedAt = null;
+    }
+
+    _recipesInFlight = _fetchRecipesInternal(forceRefresh: forceRefresh);
+    try {
+      return await _recipesInFlight!;
+    } finally {
+      _recipesInFlight = null;
+    }
+  }
+
+  static Future<List<Recipe>> _fetchRecipesInternal({bool forceRefresh = false}) async {
+    final rawCached = await OfflineCacheService.loadRecipesJson();
+
     final sw = Stopwatch()..start();
-    final uri = Uri.parse("$baseUrl/recipes");
+    final uri = Uri.parse("$baseUrl/recipes?compact=1&per_page=20");
     try {
       final online = await ConnectivityService.isOnline;
       if (!online) {
@@ -368,7 +452,9 @@ class ApiService {
         }
       }
 
-      final response = await http.get(uri, headers: await _getHeaders());
+      final response = await http
+          .get(uri, headers: await _getHeaders())
+          .timeout(_httpTimeout);
 
       debugPrint("FETCH RECIPES STATUS: ${response.statusCode}");
       sw.stop();
@@ -376,16 +462,56 @@ class ApiService {
 
       if (response.statusCode == 200) {
         await OfflineCacheService.saveRecipesJson(response.body);
-        return _parseRecipeListResponse(response.body);
+        final list = _parseRecipeListResponse(response.body);
+        _cache['recipes_all'] = list;
+        _recipesFetchedAt = DateTime.now();
+        return list;
+      }
+      if (rawCached != null && rawCached.isNotEmpty) {
+        final list = _parseRecipeListResponse(rawCached);
+        _cache['recipes_all'] = list;
+        _recipesFetchedAt = DateTime.now();
+        return list;
       }
     } catch (e) {
       sw.stop();
+      await AppLogger.logApiError(endpoint: 'GET /recipes', error: e);
       final raw = await OfflineCacheService.loadRecipesJson();
-      if (raw != null) return _parseRecipeListResponse(raw);
+      if (raw != null) {
+        final list = _parseRecipeListResponse(raw);
+        _cache['recipes_all'] = list;
+        _recipesFetchedAt = DateTime.now();
+        return list;
+      }
       rethrow;
     }
 
     throw Exception("Failed to fetch recipes");
+  }
+
+  static Future<List<Recipe>> fetchRecipesWithFilters({
+    String? category,
+    String? difficulty,
+    int? maxCookingTime,
+    int page = 1,
+    int perPage = 25,
+  }) async {
+    final params = <String, String>{
+      'page': '$page',
+      'per_page': '$perPage',
+      if (category != null && category.isNotEmpty) 'category': category,
+      if (difficulty != null && difficulty.isNotEmpty) 'difficulty': difficulty,
+      if (maxCookingTime != null && maxCookingTime > 0)
+        'max_cooking_time': '$maxCookingTime',
+    };
+    final uri = Uri.parse('$baseUrl/recipes').replace(queryParameters: params);
+    final response = await http.get(uri, headers: await _getHeaders());
+    if (response.statusCode != 200) {
+      throw Exception(_readErrorMessage(response.body) ?? 'Failed to load recipes');
+    }
+    final decoded = jsonDecode(response.body);
+    final List data = decoded is Map ? (decoded['data'] ?? []) : decoded;
+    return data.map((e) => Recipe.fromJson(e)).toList();
   }
 
   static Future<List<dynamic>> fetchUsers() async {
@@ -405,7 +531,10 @@ class ApiService {
     required String name,
     required String category,
     required String instructions,
-    required List<int> ingredientIds,
+    List<int> ingredientIds = const [],
+    List<String> ingredientNames = const [],
+    String difficulty = 'medium',
+    int cookingTime = 30,
     XFile? imageFile,
   }) async {
     final uri = Uri.parse("$baseUrl/recipes");
@@ -417,13 +546,18 @@ class ApiService {
     request.fields['name'] = name;
     request.fields['category'] = category;
     request.fields['instructions'] = instructions;
+    request.fields['difficulty'] = difficulty;
+    request.fields['cooking_time'] = '$cookingTime';
 
     for (int i = 0; i < ingredientIds.length; i++) {
       request.fields['ingredient_ids[$i]'] = ingredientIds[i].toString();
     }
+    for (int i = 0; i < ingredientNames.length; i++) {
+      request.fields['ingredient_names[$i]'] = ingredientNames[i];
+    }
 
     if (imageFile != null) {
-      final bytes = await imageFile.readAsBytes();
+      final bytes = await _prepareRecipeImageBytes(imageFile);
       final multipartFile = http.MultipartFile.fromBytes(
         'image',
         bytes,
@@ -442,7 +576,10 @@ class ApiService {
     required String name,
     required String category,
     required String instructions,
-    required List<int> ingredientIds,
+    List<int> ingredientIds = const [],
+    List<String> ingredientNames = const [],
+    String difficulty = 'medium',
+    int cookingTime = 30,
     XFile? imageFile,
   }) async {
     final uri = Uri.parse("$baseUrl/recipes/$id");
@@ -456,13 +593,18 @@ class ApiService {
     request.fields['name'] = name;
     request.fields['category'] = category;
     request.fields['instructions'] = instructions;
+    request.fields['difficulty'] = difficulty;
+    request.fields['cooking_time'] = '$cookingTime';
 
     for (int i = 0; i < ingredientIds.length; i++) {
       request.fields['ingredient_ids[$i]'] = ingredientIds[i].toString();
     }
+    for (int i = 0; i < ingredientNames.length; i++) {
+      request.fields['ingredient_names[$i]'] = ingredientNames[i];
+    }
 
     if (imageFile != null) {
-      final bytes = await imageFile.readAsBytes();
+      final bytes = await _prepareRecipeImageBytes(imageFile);
       final multipartFile = http.MultipartFile.fromBytes(
         'image',
         bytes,
@@ -523,7 +665,7 @@ class ApiService {
   }
 
   static Future<void> rateRecipe(int recipeId, int rating) async {
-    await http.post(
+    final response = await http.post(
       Uri.parse("$baseUrl/rate"),
       headers: await _getHeaders(),
       body: jsonEncode({
@@ -531,14 +673,28 @@ class ApiService {
         "rating": rating.toString(),
       }),
     );
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception(_readErrorMessage(response.body) ?? "Failed to submit rating");
+    }
   }
 
   static Future<void> logActivity(String action, int? recipeId) async {
-    await http.post(
-      Uri.parse("$baseUrl/activity"),
-      headers: await _getHeaders(),
-      body: jsonEncode({"action": action, "recipe_id": recipeId?.toString()}),
-    );
+    final payload = {"action": action, "recipe_id": recipeId?.toString()};
+    try {
+      final online = await ConnectivityService.isOnline;
+      if (!online) {
+        await OfflineCacheService.enqueuePendingActivity(payload);
+        return;
+      }
+      await http.post(
+        Uri.parse("$baseUrl/activity"),
+        headers: await _getHeaders(),
+        body: jsonEncode(payload),
+      );
+    } catch (e) {
+      await OfflineCacheService.enqueuePendingActivity(payload);
+      await AppLogger.logApiError(endpoint: 'POST /activity', error: e);
+    }
   }
 
   static Future<List<Recipe>> fetchRecommendedRecipes() async {
@@ -549,10 +705,12 @@ class ApiService {
 
     debugPrint("CACHE MISS: recommendations");
 
-    final response = await http.get(
-      Uri.parse("$baseUrl/recommended-recipes"),
-      headers: await _getHeaders(),
-    );
+    final response = await http
+        .get(
+          Uri.parse("$baseUrl/recommended-recipes"),
+          headers: await _getHeaders(),
+        )
+        .timeout(_httpTimeout);
 
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
@@ -690,7 +848,25 @@ class ApiService {
     String? endDate,
     int perPage = 50,
   }) async {
+    final r = await fetchPerformanceMetricsPaginated(
+      kind: kind,
+      startDate: startDate,
+      endDate: endDate,
+      perPage: perPage,
+      page: 1,
+    );
+    return r['items'] as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> fetchPerformanceMetricsPaginated({
+    String? kind,
+    String? startDate,
+    String? endDate,
+    int perPage = 10,
+    int page = 1,
+  }) async {
     final q = <String>['per_page=$perPage'];
+    q.add('page=$page');
     if (kind != null && kind.isNotEmpty) q.add('kind=${Uri.encodeComponent(kind)}');
     if (startDate != null && startDate.isNotEmpty) q.add('start_date=$startDate');
     if (endDate != null && endDate.isNotEmpty) q.add('end_date=$endDate');
@@ -702,8 +878,12 @@ class ApiService {
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body);
       final list = body['data'];
-      if (list is List) return List<dynamic>.from(list);
-      return [];
+      final items = list is List ? List<dynamic>.from(list) : <dynamic>[];
+      final rawMeta = body['meta'];
+      final meta = rawMeta is Map
+          ? Map<String, dynamic>.from(rawMeta)
+          : <String, dynamic>{};
+      return {'items': items, 'meta': meta};
     }
     throw Exception('Failed to load performance metrics');
   }
@@ -836,14 +1016,31 @@ class ApiService {
   }
 
   static Future<List<dynamic>> fetchApiUsage() async {
+    final r = await fetchApiUsagePaginated();
+    return r['items'] as List<dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> fetchApiUsagePaginated({
+    int page = 1,
+    int perPage = 10,
+  }) async {
     final response = await http.get(
-      Uri.parse('$baseUrl/admin/api-usage'),
+      Uri.parse('$baseUrl/admin/api-usage?page=$page&per_page=$perPage'),
       headers: await _getHeaders(),
     );
-
-    final decoded = jsonDecode(response.body);
-
-    return decoded['data'] ?? [];
+    if (response.statusCode == 200) {
+      final body = jsonDecode(response.body);
+      final list = body['data'];
+      final items = list is List
+          ? List<dynamic>.from(list)
+          : <dynamic>[];
+      final rawMeta = body['meta'];
+      final meta = rawMeta is Map
+          ? Map<String, dynamic>.from(rawMeta)
+          : <String, dynamic>{};
+      return {'items': items, 'meta': meta};
+    }
+    throw Exception('Failed to load API usage');
   }
 
   static Future<Map<String, dynamic>> globalSearch(String query) async {
@@ -869,6 +1066,216 @@ class ApiService {
         sw.elapsedMilliseconds,
       );
     }
+  }
+
+  static Future<Map<String, dynamic>> fetchSearchSuggestions(
+    String query,
+  ) async {
+    final response = await http.get(
+      Uri.parse(
+        '$baseUrl/search/suggestions?query=${Uri.encodeQueryComponent(query)}',
+      ),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load suggestions');
+    }
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+  }
+
+  static Future<List<String>> fetchSearchHistory() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/search/history'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) return [];
+    final decoded = jsonDecode(response.body);
+    final list = (decoded['data'] as List?) ?? const [];
+    return list
+        .map((e) => (e is Map ? e['query'] : null)?.toString() ?? '')
+        .where((q) => q.isNotEmpty)
+        .toList();
+  }
+
+  static Future<Map<String, dynamic>> fetchPersonalizedHomeFeed() async {
+    try {
+      final online = await ConnectivityService.isOnline;
+      if (!online) {
+        final raw = await OfflineCacheService.loadHomeFeedJson();
+        if (raw != null) {
+          final decoded = jsonDecode(raw);
+          return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+        }
+      }
+
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/home/feed'),
+            headers: await _getHeaders(),
+          )
+          .timeout(_httpTimeout);
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load personalized feed');
+      }
+      await OfflineCacheService.saveHomeFeedJson(response.body);
+      final decoded = jsonDecode(response.body);
+      return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+    } catch (e) {
+      await AppLogger.logApiError(endpoint: 'GET /home/feed', error: e);
+      final raw = await OfflineCacheService.loadHomeFeedJson();
+      if (raw != null) {
+        final decoded = jsonDecode(raw);
+        return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+      }
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>> fetchAppVersionInfo() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/app/version'),
+      headers: const {'Accept': 'application/json'},
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to check app version');
+    }
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+  }
+
+  static Future<List<Map<String, dynamic>>> suggestIngredientSubstitutions(
+    List<String> ingredients,
+  ) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/ingredients/substitutions'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'ingredients': ingredients}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch substitutions');
+    }
+    final decoded = jsonDecode(response.body);
+    final list = (decoded['data'] as List?) ?? const [];
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<void> submitSubstitutionFeedback({
+    required String ingredient,
+    required String substitute,
+    required bool accepted,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/ingredients/substitutions/feedback'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'ingredient': ingredient,
+        'substitute': substitute,
+        'accepted': accepted,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to save substitution feedback');
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchIngredientComboSuggestions(
+    List<int> ingredientIds, {
+    int limit = 6,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/ingredients/combo-suggestions'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'ingredient_ids': ingredientIds, 'limit': limit}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch ingredient combo suggestions');
+    }
+    final decoded = jsonDecode(response.body);
+    final list = (decoded['data'] as List?) ?? const [];
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<Map<String, dynamic>> askCookingAssistant({
+    required String message,
+    List<int>? ingredientIds,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/assistant/cook-help'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'message': message,
+        if (ingredientIds != null) 'ingredient_ids': ingredientIds,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Assistant is unavailable right now');
+    }
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+  }
+
+  static Future<Map<String, dynamic>> fetchCookingInsights() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/user/cooking-insights'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load cooking insights');
+    }
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchSmartNotifications() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/notifications/smart'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load smart notifications');
+    }
+    final decoded = jsonDecode(response.body);
+    final list = (decoded['data'] as List?) ?? const [];
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<List<Recipe>> fetchCookNowRecipes(
+    List<int> ingredientIds, {
+    int limit = 12,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/cook-now'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'ingredient_ids': ingredientIds, 'limit': limit}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load cook now recipes');
+    }
+    final decoded = jsonDecode(response.body);
+    final list = (decoded['data'] as List?) ?? const [];
+    return list.map((e) => Recipe.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  static Future<Map<String, dynamic>> adminAutoTagRecipe({
+    String? name,
+    String? instructions,
+    List<String>? ingredients,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/admin/recipes/auto-tag'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        if (name != null) 'name': name,
+        if (instructions != null) 'instructions': instructions,
+        if (ingredients != null) 'ingredients': ingredients,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to auto-tag recipe');
+    }
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
   }
 
   // 🔥 FIX #1: GET COLLECTIONS
@@ -905,7 +1312,7 @@ class ApiService {
   }
 
   // 🔥 FIX: ADD RECIPE TO COLLECTION
-  static Future<void> addToCollection(int collectionId, int recipeId) async {
+  static Future<bool> addToCollection(int collectionId, int recipeId) async {
     final response = await http.post(
       Uri.parse("$baseUrl/collections/add"),
       headers: await _getHeaders(), // ✅ Use helper
@@ -913,8 +1320,17 @@ class ApiService {
     );
 
     if (response.statusCode != 200) {
-      throw Exception("Add to collection failed");
+      throw Exception(
+        _readErrorMessage(response.body) ?? "Add to collection failed",
+      );
     }
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        return decoded['duplicate'] == true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   static Future<Map<String, dynamic>> getCollectionDetail(int id) async {
@@ -947,5 +1363,35 @@ class ApiService {
       debugPrint("Recent fetch error: $e");
     }
     return [];
+  }
+
+  static Future<void> syncPendingActivities() async {
+    final online = await ConnectivityService.isOnline;
+    if (!online) return;
+    final pending = await OfflineCacheService.loadPendingActivities();
+    if (pending.isEmpty) return;
+    final sent = <Map<String, dynamic>>[];
+    for (final payload in pending) {
+      try {
+        final response = await http.post(
+          Uri.parse("$baseUrl/activity"),
+          headers: await _getHeaders(),
+          body: jsonEncode(payload),
+        );
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          sent.add(payload);
+        }
+      } catch (_) {}
+    }
+    if (sent.length == pending.length) {
+      await OfflineCacheService.clearPendingActivities();
+    }
+  }
+
+  static Future<void> warmStartupData() async {
+    try {
+      // Keep startup warm-up lightweight and non-blocking for first paint.
+      await fetchIngredients();
+    } catch (_) {}
   }
 }

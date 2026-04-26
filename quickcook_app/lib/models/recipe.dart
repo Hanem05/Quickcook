@@ -6,6 +6,7 @@ class Recipe {
   final String? imageUrl;
   final String? category;
   final double? rating;
+  final int? userRating;
 
   /// Ingredient match flow (match-recipes API).
   final double? matchCoveragePct;
@@ -25,6 +26,7 @@ class Recipe {
     this.imageUrl,
     this.category,
     this.rating,
+    this.userRating,
     this.matchCoveragePct,
     this.missingIngredientsApprox,
     this.successScore,
@@ -63,6 +65,9 @@ class Recipe {
       rating: json['average_rating'] != null
           ? double.tryParse(json['average_rating'].toString())
           : null,
+      userRating: json['user_rating'] != null
+          ? int.tryParse(json['user_rating'].toString())
+          : null,
       matchCoveragePct: cov != null ? double.tryParse(cov.toString()) : null,
       missingIngredientsApprox:
           miss is int ? miss : int.tryParse(miss?.toString() ?? ''),
@@ -85,6 +90,7 @@ class Recipe {
         'image_url': imageUrl,
         'category': category,
         'average_rating': rating,
+        if (userRating != null) 'user_rating': userRating,
         if (matchCoveragePct != null)
           'match_coverage_pct': matchCoveragePct,
         if (missingIngredientsApprox != null)
