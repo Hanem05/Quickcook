@@ -87,7 +87,7 @@ class RecipeController extends Controller
         $difficulty = request()->query('difficulty');
         $ingredientIds = request()->query('ingredient_ids', []);
         $maxCookingTime = (int) request()->query('max_cooking_time', 0);
-        $perPage = min(50, max(5, (int) request()->query('per_page', 25)));
+        $perPage = min(200, max(5, (int) request()->query('per_page', 25)));
 
         $key = 'recipes:v'.$this->recipesCacheVersion().':'.md5(json_encode([
             'category' => $category,

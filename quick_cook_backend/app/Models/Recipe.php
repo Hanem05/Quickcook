@@ -35,11 +35,12 @@ class Recipe extends Model
 
     public function getImageUrlAttribute()
     {
-        if (! $this->image) {
-            return null;
+        $resolved = static::publicImageUrl($this->image);
+        if ($resolved !== null && trim($resolved) !== '') {
+            return $resolved;
         }
 
-        return static::publicImageUrl($this->image);
+        return static::defaultImageUrl();
     }
 
     public static function publicImageUrl(?string $path): ?string
@@ -48,8 +49,18 @@ class Recipe extends Model
             return null;
         }
 
+        $trimmed = trim($path);
+        if (preg_match('/^https?:\/\//i', $trimmed) === 1 || str_starts_with($trimmed, '//')) {
+            return $trimmed;
+        }
+
         $raw = ltrim($path, '/');
         $encoded = implode('/', array_map('rawurlencode', explode('/', $raw)));
+
+        if (str_starts_with($raw, 'images/')) {
+            return asset($encoded);
+        }
+
         $cdnBase = rtrim((string) env('APP_CDN_URL', ''), '/');
         if ($cdnBase !== '') {
             return $cdnBase.'/'.$encoded;
@@ -61,6 +72,11 @@ class Recipe extends Model
         }
 
         return asset('storage/'.$encoded);
+    }
+
+    public static function defaultImageUrl(): string
+    {
+        return asset('images/recipe-placeholder.svg');
     }
 
     public function ratings()

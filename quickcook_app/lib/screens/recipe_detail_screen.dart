@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -79,15 +80,14 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     try {
       final data = await ApiService.fetchRecipeDetail(widget.recipeId);
 
-      // ⭐ Log Activity: View Recipe
-      await ApiService.logActivity("view_recipe", widget.recipeId);
-
       if (!mounted) return;
       setState(() {
         recipe = data;
         userRating = data.userRating ?? userRating;
         loading = false;
       });
+      // Don't block detail render on analytics sync.
+      unawaited(ApiService.logActivity("view_recipe", widget.recipeId));
       await _persistRecentSnapshot(data);
     } catch (e) {
       if (!mounted) return;

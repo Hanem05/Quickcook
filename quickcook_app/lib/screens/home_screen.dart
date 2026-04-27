@@ -28,6 +28,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const int _homeFeedRenderLimit = 40;
   // --- CORE STATE ---
   List<Ingredient> allIngredients = [];
   List<Ingredient> filteredIngredients = [];
@@ -84,8 +85,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> loadSprint9Signals() async {
     try {
-      final insights = await ApiService.fetchCookingInsights();
-      final notes = await ApiService.fetchSmartNotifications();
+      final res = await Future.wait([
+        ApiService.fetchCookingInsights(),
+        ApiService.fetchSmartNotifications(),
+      ]);
+      final insights = res[0] as Map<String, dynamic>;
+      final notes = res[1] as List<Map<String, dynamic>>;
       if (!mounted) return;
       setState(() {
         cookingInsights = Map<String, dynamic>.from(
@@ -197,7 +202,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final data = await ApiService.fetchRecommendedRecipes();
       if (!mounted) return;
       setState(() {
-        recommendedRecipes = data;
+        recommendedRecipes = data.take(_homeFeedRenderLimit).toList();
         isLoadingRecommendations = false;
       });
       if (recommendedRecipes.isNotEmpty) {
@@ -218,6 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (list is! List) return [];
         return list
             .map((e) => Recipe.fromJson(Map<String, dynamic>.from(e as Map)))
+            .take(_homeFeedRenderLimit)
             .toList();
       }
       if (!mounted) return;
@@ -236,8 +242,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> loadSearchAssist() async {
     try {
-      final history = await ApiService.fetchSearchHistory();
-      final suggestions = await ApiService.fetchSearchSuggestions('');
+      final res = await Future.wait([
+        ApiService.fetchSearchHistory(),
+        ApiService.fetchSearchSuggestions(''),
+      ]);
+      final history = res[0] as List<String>;
+      final suggestions = res[1] as Map<String, dynamic>;
       if (!mounted) return;
       setState(() {
         recentSearches = history;
@@ -270,8 +280,9 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => RecipeDetailScreen(recipeId: recipeId)),
     );
     loadRecent();
-    await loadRecommendations(force: true);
-    await loadPersonalizedFeed();
+    // Refresh in background so returning from details feels instant.
+    unawaited(loadRecommendations(force: true));
+    unawaited(loadPersonalizedFeed());
   }
 
   void filterIngredients(String query) {
@@ -822,7 +833,7 @@ class _HomeScreenState extends State<HomeScreen> {
           )
         else
           SizedBox(
-            height: 220,
+            height: 232,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -846,7 +857,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildSectionHeader("Trending"),
           const SizedBox(height: 12),
           SizedBox(
-            height: 220,
+            height: 232,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               itemCount: trendingRecipes.length,
@@ -1115,7 +1126,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Text(
                       recipe.name,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
@@ -1126,6 +1137,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 4),
                     Text(
                       recipe.category ?? "Recipe",
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: cs.primary,
                         fontSize: 11,
@@ -1144,6 +1157,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildIngredientSelectionSection() {
     final cs = Theme.of(context).colorScheme;
+    const initialIngredientBatch = 24;
+    final visibleIngredients = filteredIngredients.take(initialIngredientBatch).toList();
+    final hasMoreIngredients = filteredIngredients.length > initialIngredientBatch;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
@@ -1357,11 +1374,24 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Wrap(
                 spacing: 10,
                 runSpacing: 12,
-                children: filteredIngredients
+                children: visibleIngredients
                     .map((i) => _buildIngredientChip(i))
                     .toList(),
               ),
             ),
+          if (!isSearching && hasMoreIngredients) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _openAllIngredientsPicker,
+                icon: const Icon(Icons.expand_more_rounded),
+                label: Text(
+                  'Load More Ingredients (${filteredIngredients.length})',
+                ),
+              ),
+            ),
+          ],
           if (!isSearching &&
               (recentSearches.isNotEmpty || suggestedKeywords.isNotEmpty)) ...[
             const SizedBox(height: 16),
@@ -1467,6 +1497,140 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
       ),
+    );
+  }
+
+  Future<void> _openAllIngredientsPicker() async {
+    final cs = Theme.of(context).colorScheme;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        String query = '';
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final normalized = query.trim().toLowerCase();
+            final list = normalized.isEmpty
+                ? allIngredients
+                : allIngredients
+                    .where((i) => i.name.toLowerCase().contains(normalized))
+                    .toList();
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 14,
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+                ),
+                child: SizedBox(
+                  height: MediaQuery.of(context).size.height * 0.78,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'All Ingredients',
+                            style: TextStyle(
+                              color: cs.onSurface,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed: () {
+                              setState(() => selectedIngredients.clear());
+                              _refreshComboSuggestions();
+                              setModalState(() {});
+                            },
+                            icon: const Icon(Icons.clear_all_rounded, size: 18),
+                            label: const Text('Clear Selected'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        onChanged: (value) => setModalState(() => query = value),
+                        decoration: InputDecoration(
+                          hintText: 'Search ingredients...',
+                          prefixIcon: const Icon(Icons.search_rounded),
+                          suffixIcon: query.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.close_rounded),
+                                  onPressed: () => setModalState(() => query = ''),
+                                ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '${selectedIngredients.length} selected',
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: list.isEmpty
+                            ? Center(
+                                child: Text(
+                                  'No ingredients found.',
+                                  style: TextStyle(color: cs.onSurfaceVariant),
+                                ),
+                              )
+                            : ListView.builder(
+                                itemCount: list.length,
+                                itemBuilder: (context, index) {
+                                  final ingredient = list[index];
+                                  final selected = selectedIngredients.contains(ingredient.id);
+                                  return CheckboxListTile(
+                                    value: selected,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                    ),
+                                    title: Text(ingredient.name),
+                                    controlAffinity: ListTileControlAffinity.leading,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        if (value ?? false) {
+                                          selectedIngredients.add(ingredient.id);
+                                        } else {
+                                          selectedIngredients.remove(ingredient.id);
+                                        }
+                                      });
+                                      _refreshComboSuggestions();
+                                      setModalState(() {});
+                                    },
+                                  );
+                                },
+                              ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: const Text('Done'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

@@ -18,6 +18,12 @@ import 'app_logger.dart';
 class ApiService {
   static String? token;
   static const Duration _httpTimeout = Duration(seconds: 6);
+  static SharedPreferences? _prefs;
+  static String? _authToken;
+
+  static Future<SharedPreferences> _getPrefs() async {
+    return _prefs ??= await SharedPreferences.getInstance();
+  }
 
   static final Map<String, dynamic> _cache = {};
   static Future<List<Recipe>>? _recipesInFlight;
@@ -71,8 +77,10 @@ class ApiService {
   }
 
   static Future<String?> getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('token');
+    if (_authToken != null) return _authToken;
+    final prefs = await _getPrefs();
+    _authToken = prefs.getString('token');
+    return _authToken;
   }
 
   static void clearCache(String key) {
@@ -80,12 +88,12 @@ class ApiService {
   }
 
   static Future<Map<String, String>> _getHeaders() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
+    final prefs = await _getPrefs();
+    _authToken ??= prefs.getString('token');
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'Authorization': 'Bearer $token',
+      'Authorization': 'Bearer ${_authToken ?? ''}',
     };
   }
 
@@ -94,20 +102,23 @@ class ApiService {
     String password,
   ) async {
     try {
-      final response = await http.post(
+      final response = await http
+          .post(
         Uri.parse("$baseUrl/login"),
         headers: {
           "Accept": "application/json",
           "Content-Type": "application/json",
         },
         body: jsonEncode({"email": email, "password": password}),
-      );
+      )
+          .timeout(_httpTimeout);
 
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200) {
-        final prefs = await SharedPreferences.getInstance();
+        final prefs = await _getPrefs();
         await prefs.setString('token', data['token']);
+        _authToken = data['token']?.toString();
 
         if (data['user'] != null && data['user']['role'] != null) {
           await prefs.setString('role', data['user']['role']);
@@ -142,20 +153,23 @@ class ApiService {
     String password,
   ) async {
     try {
-      final response = await http.post(
+      final response = await http
+          .post(
         Uri.parse("$baseUrl/register"),
         headers: {
           "Accept": "application/json",
           "Content-Type": "application/json",
         },
         body: jsonEncode({"name": name, "email": email, "password": password}),
-      );
+      )
+          .timeout(_httpTimeout);
 
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        final prefs = await SharedPreferences.getInstance();
+        final prefs = await _getPrefs();
         await prefs.setString('token', data['token']);
+        _authToken = data['token']?.toString();
         return null; // Return null means SUCCESS (no errors)
       } else {
         // 🌿 SMART ERROR HANDLING: Grabs the exact error from Laravel
@@ -179,12 +193,15 @@ class ApiService {
 
   static Future<void> logout() async {
     try {
-      await http.post(Uri.parse("$baseUrl/logout"), headers: await _getHeaders());
+      await http
+          .post(Uri.parse("$baseUrl/logout"), headers: await _getHeaders())
+          .timeout(_httpTimeout);
     } catch (e) {
       await AppLogger.logApiError(endpoint: 'POST /logout', error: e);
     }
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs();
     await prefs.remove('token');
+    _authToken = null;
   }
 
   static Future<List<Ingredient>> fetchIngredients() async {
@@ -265,11 +282,13 @@ class ApiService {
       if (maxCookingTime != null && maxCookingTime > 0)
         "max_cooking_time": maxCookingTime,
     };
-    final response = await http.post(
+    final response = await http
+        .post(
       Uri.parse("$baseUrl/match-recipes?page=$page"),
       headers: await _getHeaders(),
       body: jsonEncode(body),
-    );
+    )
+        .timeout(_httpTimeout);
     if (response.statusCode != 200) {
       throw Exception(
         _readErrorMessage(response.body) ?? 'Could not load matching recipes.',
@@ -324,10 +343,12 @@ class ApiService {
 
     debugPrint("CACHE MISS: recipe $id");
 
-    final response = await http.get(
+    final response = await http
+        .get(
       Uri.parse("$baseUrl/recipes/$id"),
       headers: await _getHeaders(),
-    );
+    )
+        .timeout(_httpTimeout);
 
     if (response.statusCode == 200) {
       final result = Recipe.fromJson(jsonDecode(response.body));
@@ -341,10 +362,12 @@ class ApiService {
   }
 
   static Future<List<Recipe>> fetchFavorite() async {
-    final response = await http.get(
+    final response = await http
+        .get(
       Uri.parse("$baseUrl/favorites"),
       headers: await _getHeaders(),
-    );
+    )
+        .timeout(_httpTimeout);
     if (response.statusCode == 200) {
       List data = jsonDecode(response.body);
       return data.map((e) => Recipe.fromJson(e['recipe'])).toList();
@@ -353,10 +376,12 @@ class ApiService {
   }
 
   static Future<Set<int>> fetchFavoriteIds() async {
-    final response = await http.get(
+    final response = await http
+        .get(
       Uri.parse("$baseUrl/favorites"),
       headers: await _getHeaders(),
-    );
+    )
+        .timeout(_httpTimeout);
     if (response.statusCode == 200) {
       List data = jsonDecode(response.body);
       return data.map<int>((e) => e['recipe']['id'] as int).toSet();
@@ -365,11 +390,13 @@ class ApiService {
   }
 
   static Future<void> addToFavorites(int recipeId) async {
-    final response = await http.post(
+    final response = await http
+        .post(
       Uri.parse("$baseUrl/favorites"),
       headers: await _getHeaders(),
       body: jsonEncode({"recipe_id": recipeId}),
-    );
+    )
+        .timeout(_httpTimeout);
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw Exception(
         _readErrorMessage(response.body) ?? 'Failed to add favorite',
@@ -378,10 +405,12 @@ class ApiService {
   }
 
   static Future<void> removeFavorite(int recipeId) async {
-    final response = await http.delete(
+    final response = await http
+        .delete(
       Uri.parse("$baseUrl/favorites/$recipeId"),
       headers: await _getHeaders(),
-    );
+    )
+        .timeout(_httpTimeout);
     if (response.statusCode != 200)
       throw Exception("Failed to remove favorite");
   }
@@ -441,7 +470,7 @@ class ApiService {
     final rawCached = await OfflineCacheService.loadRecipesJson();
 
     final sw = Stopwatch()..start();
-    final uri = Uri.parse("$baseUrl/recipes?compact=1&per_page=20");
+    final uri = Uri.parse("$baseUrl/recipes?compact=1&per_page=200");
     try {
       final online = await ConnectivityService.isOnline;
       if (!online) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
@@ -33,6 +35,8 @@ class _RecipeScreenState extends State<RecipeScreen> {
   int currentPage = 1;
   bool hasMore = true;
   bool loadingMore = false;
+  bool isApplyingFilters = false;
+  int _filterRequestToken = 0;
 
   /// CATEGORY FILTER
   List<String> categories = [
@@ -125,73 +129,53 @@ class _RecipeScreenState extends State<RecipeScreen> {
     });
   }
 
+  Future<void> _reloadFiltersFromServer() async {
+    final requestToken = ++_filterRequestToken;
+    setState(() => isApplyingFilters = true);
+    try {
+      final result = await ApiService.matchRecipes(
+        widget.ingredientIds,
+        1,
+        selectedCategory == "All" ? null : selectedCategory,
+        difficulty: selectedDifficulty == "All" ? null : selectedDifficulty,
+        maxCookingTime: maxCookingTime,
+      );
+      if (!mounted || requestToken != _filterRequestToken) return;
+      setState(() {
+        currentPage = 1;
+        allRecipes = List<Recipe>.from(result["recipes"] ?? const <Recipe>[]);
+        filteredRecipes = allRecipes;
+        hasMore = result["hasMore"] == true;
+      });
+    } catch (_) {
+      // Keep current cards on-screen to avoid perceived "blank loading" on filter taps.
+    } finally {
+      if (mounted && requestToken == _filterRequestToken) {
+        setState(() => isApplyingFilters = false);
+      }
+    }
+  }
+
   /// CATEGORY FILTER
   Future<void> filterByCategory(String category) async {
     setState(() {
       selectedCategory = category;
-      currentPage = 1;
-      allRecipes.clear();
-      filteredRecipes.clear();
-      hasMore = true;
     });
-
-    final result = await ApiService.matchRecipes(
-      widget.ingredientIds,
-      currentPage,
-      category == "All" ? null : category,
-      difficulty: selectedDifficulty == "All" ? null : selectedDifficulty,
-      maxCookingTime: maxCookingTime,
-    );
-
-    setState(() {
-      allRecipes = result["recipes"];
-      filteredRecipes = result["recipes"];
-      hasMore = result["hasMore"];
-    });
+    await _reloadFiltersFromServer();
   }
 
   Future<void> filterByDifficulty(String difficulty) async {
     setState(() {
       selectedDifficulty = difficulty;
-      currentPage = 1;
-      allRecipes.clear();
-      filteredRecipes.clear();
-      hasMore = true;
     });
-    final result = await ApiService.matchRecipes(
-      widget.ingredientIds,
-      currentPage,
-      selectedCategory == "All" ? null : selectedCategory,
-      difficulty: difficulty == "All" ? null : difficulty,
-      maxCookingTime: maxCookingTime,
-    );
-    setState(() {
-      allRecipes = result["recipes"];
-      filteredRecipes = result["recipes"];
-      hasMore = result["hasMore"];
-    });
+    await _reloadFiltersFromServer();
   }
 
   Future<void> filterByMaxCookingTime(int? minutes) async {
     setState(() {
       maxCookingTime = minutes;
-      currentPage = 1;
-      allRecipes.clear();
-      filteredRecipes.clear();
-      hasMore = true;
     });
-    final result = await ApiService.matchRecipes(
-      widget.ingredientIds,
-      currentPage,
-      selectedCategory == "All" ? null : selectedCategory,
-      difficulty: selectedDifficulty == "All" ? null : selectedDifficulty,
-      maxCookingTime: maxCookingTime,
-    );
-    setState(() {
-      allRecipes = result["recipes"];
-      filteredRecipes = result["recipes"];
-      hasMore = result["hasMore"];
-    });
+    await _reloadFiltersFromServer();
   }
 
   /// IMAGE (OPTIMIZED + CACHED + STYLED)
@@ -303,7 +287,6 @@ class _RecipeScreenState extends State<RecipeScreen> {
   }
 
   Future<void> _openRecipeDetail(Recipe recipe) async {
-    await ApiService.logActivity("view_recipe", recipe.id);
     if (!context.mounted) return;
     Navigator.push(
       context,
@@ -311,21 +294,21 @@ class _RecipeScreenState extends State<RecipeScreen> {
         builder: (_) => RecipeDetailScreen(recipeId: recipe.id),
       ),
     );
+    // Don't block navigation on analytics calls.
+    unawaited(ApiService.logActivity("view_recipe", recipe.id));
   }
 
   Future<void> _saveRecipeToFavorites(Recipe recipe) async {
     if (savedRecipes.contains(recipe.id) || savingFavoriteIds.contains(recipe.id)) return;
     setState(() {
       savingFavoriteIds.add(recipe.id);
+      // Optimistic update for instant UI feedback.
+      savedRecipes.add(recipe.id);
     });
     try {
       await ApiService.addToFavorites(recipe.id);
-      await ApiService.postRecommendationFeedback(recipe.id, 'save');
-      await ApiService.logActivity("favorite_recipe", recipe.id);
-      if (!mounted) return;
-      setState(() {
-        savedRecipes.add(recipe.id);
-      });
+      unawaited(ApiService.postRecommendationFeedback(recipe.id, 'save'));
+      unawaited(ApiService.logActivity("favorite_recipe", recipe.id));
       if (!context.mounted) return;
       AppMessage.show(
         context,
@@ -334,6 +317,9 @@ class _RecipeScreenState extends State<RecipeScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      setState(() {
+        savedRecipes.remove(recipe.id);
+      });
       AppMessage.show(
         context,
         text: e.toString().replaceFirst(RegExp(r'^Exception:\s*'), ''),
@@ -663,6 +649,17 @@ class _RecipeScreenState extends State<RecipeScreen> {
                 ),
 
                 const SizedBox(height: 16),
+                if (isApplyingFilters)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: LinearProgressIndicator(
+                      minHeight: 2,
+                      borderRadius: BorderRadius.circular(999),
+                      color: cs.primary,
+                      backgroundColor: cs.surfaceContainerHigh,
+                    ),
+                  ),
+                if (isApplyingFilters) const SizedBox(height: 8),
 
                 /// RECIPE GRID
                 Expanded(
@@ -702,7 +699,8 @@ class _RecipeScreenState extends State<RecipeScreen> {
                                   crossAxisCount: 2,
                                   mainAxisSpacing: 14,
                                   crossAxisSpacing: 14,
-                                  childAspectRatio: 0.72,
+                                  // Taller cards prevent bottom overflow on smaller emulator widths.
+                                  childAspectRatio: 0.58,
                                 ),
                                 itemBuilder: (context, index) {
                                   return _buildMatchedRecipeGridCard(filteredRecipes[index]);

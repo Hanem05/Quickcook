@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data'; // ADDED: For handling raw file bytes
 import 'package:flutter/material.dart';
@@ -164,6 +165,38 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     }
   }
 
+  Future<void> _refreshCoreDataInBackground({
+    bool includeAnalytics = false,
+    bool showToast = false,
+  }) async {
+    try {
+      final results = await Future.wait<dynamic>([
+        ApiService.fetchRecipes(forceRefresh: true),
+        ApiService.fetchUsers(),
+      ]);
+      if (!mounted) return;
+      final recipeData = (results[0] as List<Recipe>);
+      final userData = (results[1] as List<dynamic>);
+      setState(() {
+        recipes = recipeData;
+        users = userData;
+        totalRecipes = recipeData.length;
+        totalUsers = userData.length;
+      });
+      if (includeAnalytics) {
+        unawaited(_loadAnalyticsInBackground());
+      }
+      if (showToast && mounted) {
+        _showSnackBar("Dashboard updated.");
+      }
+    } catch (e) {
+      debugPrint('background refresh: $e');
+      if (showToast && mounted) {
+        _showSnackBar("Refresh failed.", isError: true);
+      }
+    }
+  }
+
   /// Loads each analytics endpoint on its own. A single failure no longer clears the whole dashboard.
   Future<void> _loadAnalyticsInBackground() async {
     AdminStats? nextAdminStats;
@@ -172,50 +205,62 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     List<dynamic>? nextIngredientUsage;
     List<dynamic>? nextActivityLogs;
 
-    try {
-      nextAdminStats = await ApiService.fetchAdminStats();
-    } catch (e) {
-      debugPrint('admin stats: $e');
-    }
-    try {
-      nextPopular = await ApiService.fetchPopularRecipes();
-    } catch (e) {
-      debugPrint('popular: $e');
-    }
-    try {
-      nextActivityStats = await ApiService.fetchActivityStats();
-    } catch (e) {
-      debugPrint('activity stats: $e');
-    }
-    try {
-      nextIngredientUsage = await ApiService.fetchIngredientUsage(
-        date: _selectedInsightDate,
-        month: _selectedInsightMonth,
-      );
-    } catch (e) {
-      debugPrint('ingredient usage: $e');
-    }
-    try {
-      nextActivityLogs = await ApiService.fetchActivityLogs(_activityPage);
-    } catch (e) {
-      debugPrint('activity logs: $e');
-    }
+    await Future.wait<void>([
+      () async {
+        try {
+          nextAdminStats = await ApiService.fetchAdminStats();
+        } catch (e) {
+          debugPrint('admin stats: $e');
+        }
+      }(),
+      () async {
+        try {
+          nextPopular = await ApiService.fetchPopularRecipes();
+        } catch (e) {
+          debugPrint('popular: $e');
+        }
+      }(),
+      () async {
+        try {
+          nextActivityStats = await ApiService.fetchActivityStats();
+        } catch (e) {
+          debugPrint('activity stats: $e');
+        }
+      }(),
+      () async {
+        try {
+          nextIngredientUsage = await ApiService.fetchIngredientUsage(
+            date: _selectedInsightDate,
+            month: _selectedInsightMonth,
+          );
+        } catch (e) {
+          debugPrint('ingredient usage: $e');
+        }
+      }(),
+      () async {
+        try {
+          nextActivityLogs = await ApiService.fetchActivityLogs(_activityPage);
+        } catch (e) {
+          debugPrint('activity logs: $e');
+        }
+      }(),
+    ]);
 
     if (!mounted) return;
     setState(() {
       if (nextAdminStats != null) adminStats = nextAdminStats;
-      if (nextPopular != null) popularRecipes = nextPopular;
-      if (nextActivityStats != null) activityStats = nextActivityStats;
-      if (nextIngredientUsage != null) ingredientUsage = nextIngredientUsage;
+      if (nextPopular != null) popularRecipes = nextPopular!;
+      if (nextActivityStats != null) activityStats = nextActivityStats!;
+      if (nextIngredientUsage != null) ingredientUsage = nextIngredientUsage!;
       if (nextActivityLogs != null) {
-        activityLogs = nextActivityLogs;
-        _hasMoreActivity = nextActivityLogs.length == 10;
+        activityLogs = nextActivityLogs!;
+        _hasMoreActivity = nextActivityLogs!.length == 10;
       }
     });
 
-    await _reloadApiUsage(reset: true);
-    await _reloadErrorLogs(resetPage: true);
-    await _reloadPerformanceMetrics(reset: true);
+    unawaited(_reloadApiUsage(reset: true));
+    unawaited(_reloadErrorLogs(resetPage: true));
+    unawaited(_reloadPerformanceMetrics(reset: true));
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -458,11 +503,21 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   // --- CRUD ACTIONS ---
   Future<void> deleteUser(int id) async {
+    final backup = List<dynamic>.from(users);
+    setState(() {
+      users.removeWhere((u) => (u['id'] as int?) == id);
+      totalUsers = users.length;
+    });
     try {
       await ApiService.deleteUser(id);
-      loadData();
       _showSnackBar("User removed from system.");
     } catch (e) {
+      if (mounted) {
+        setState(() {
+          users = backup;
+          totalUsers = users.length;
+        });
+      }
       _showSnackBar("Failed to delete user.", isError: true);
     }
   }
@@ -483,11 +538,21 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }
 
   Future<void> deleteRecipe(int id) async {
+    final backup = List<Recipe>.from(recipes);
+    setState(() {
+      recipes.removeWhere((r) => r.id == id);
+      totalRecipes = recipes.length;
+    });
     try {
       await ApiService.deleteRecipe(id);
-      loadData();
       _showSnackBar("Recipe deleted successfully.");
     } catch (e) {
+      if (mounted) {
+        setState(() {
+          recipes = backup;
+          totalRecipes = recipes.length;
+        });
+      }
       _showSnackBar("Error deleting recipe.", isError: true);
     }
   }
@@ -3632,8 +3697,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     tooltip: "Refresh Data",
                     icon: Icons.sync_rounded,
                     onPressed: () {
-                      loadData();
-                      _showSnackBar("Dashboard updated.");
+                      unawaited(
+                        _refreshCoreDataInBackground(
+                          includeAnalytics: true,
+                          showToast: true,
+                        ),
+                      );
                     },
                   ),
                 ],
@@ -3907,7 +3976,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(builder: (_) => const CreateUserScreen()),
-                          ).then((_) => loadData()),
+                          ).then((_) => _refreshCoreDataInBackground()),
                         ),
                         _sidebarActionButton(
                           icon: Icons.auto_awesome_rounded,
@@ -3921,7 +3990,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(builder: (_) => const RecipeFormScreen()),
-                          ).then((_) => loadData()),
+                          ).then((_) => _refreshCoreDataInBackground()),
                         ),
                       ],
                     ),

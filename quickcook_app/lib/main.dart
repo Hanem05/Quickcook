@@ -15,6 +15,11 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
+    final message = details.exceptionAsString();
+    // Layout overflow noise can flood logs and slow debug sessions.
+    if (message.contains('A RenderFlex overflowed')) {
+      return;
+    }
     AppLogger.logCrash(
       details.exception,
       details.stack ?? StackTrace.current,
