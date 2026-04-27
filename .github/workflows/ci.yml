@@ -37,6 +37,12 @@ jobs:
       - name: Validate Laravel bootstrap
         run: php artisan --version
 
+      - name: Run backend unit tests
+        run: php artisan test --testsuite=Unit
+
+      - name: Run backend feature tests
+        run: php artisan test --testsuite=Feature
+
   flutter-quality:
     name: Flutter Quality
     runs-on: ubuntu-latest
