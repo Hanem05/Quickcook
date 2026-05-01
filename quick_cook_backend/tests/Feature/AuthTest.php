@@ -91,6 +91,33 @@ class AuthTest extends TestCase
             ]);
     }
 
+    public function test_login_endpoint_is_rate_limited_after_multiple_failed_attempts(): void
+    {
+        $this->createUser(['email' => 'jane@example.com']);
+
+        for ($i = 0; $i < 7; $i++) {
+            $response = $this->postJson('/api/login', [
+                'email' => 'jane@example.com',
+                'password' => 'wrong-password',
+            ]);
+        }
+
+        $response->assertStatus(429);
+    }
+
+    public function test_register_endpoint_is_rate_limited_after_multiple_attempts(): void
+    {
+        for ($i = 0; $i < 11; $i++) {
+            $response = $this->postJson('/api/register', [
+                'name' => 'Rate User '.$i,
+                'email' => "rate-user-$i@example.com",
+                'password' => 'password123',
+            ]);
+        }
+
+        $response->assertStatus(429);
+    }
+
     public function test_logout_revokes_current_token_for_authenticated_user(): void
     {
         $user = $this->createUser();

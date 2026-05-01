@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
@@ -13,6 +14,9 @@ import 'theme/theme_notifier.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kDebugMode) {
+    debugPrint('QuickCook API base URL: ${ApiService.baseUrl}');
+  }
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
     final message = details.exceptionAsString();

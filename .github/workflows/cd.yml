@@ -16,6 +16,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer
+
+      - name: Install backend dependencies
+        working-directory: quick_cook_backend
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare backend test environment
+        working-directory: quick_cook_backend
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Run PHPUnit (dot output)
+        working-directory: quick_cook_backend
+        run: |
+          mkdir -p build
+          vendor/bin/phpunit --colors=always --log-junit build/phpunit-report.xml
+
+      - name: Enforce minimum PHPUnit test count (70+)
+        working-directory: quick_cook_backend
+        run: |
+          php -r "$xml = simplexml_load_file('build/phpunit-report.xml'); if (!$xml) {fwrite(STDERR, 'Unable to read PHPUnit report'.PHP_EOL); exit(1);} $attrs = $xml->attributes(); $tests = isset($attrs['tests']) ? (int) $attrs['tests'] : 0; echo 'PHPUnit tests executed: '.$tests.PHP_EOL; if ($tests < 70) {fwrite(STDERR, 'Expected at least 70 PHPUnit tests in CD.'.PHP_EOL); exit(1);}"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:

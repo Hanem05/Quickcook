@@ -6,6 +6,10 @@ class OfflineCacheService {
   static const _recipesKey = 'offline_cache_recipes_json';
   static const _ingredientsKey = 'offline_cache_ingredients_json';
   static const _homeFeedKey = 'offline_cache_home_feed_json';
+  static const _favoritesKey = 'offline_cache_favorites_json';
+  static const _collectionsKey = 'offline_cache_collections_json';
+  static const _collectionDetailPrefix = 'offline_cache_collection_detail_';
+  static const _recipeDetailPrefix = 'offline_cache_recipe_detail_';
   static const _pendingActivitiesKey = 'offline_pending_activities_json';
 
   static Future<void> saveRecipesJson(String json) async {
@@ -40,6 +44,46 @@ class OfflineCacheService {
   static Future<String?> loadHomeFeedJson() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_homeFeedKey);
+  }
+
+  static Future<void> saveFavoritesJson(String json) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_favoritesKey, json);
+  }
+
+  static Future<String?> loadFavoritesJson() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_favoritesKey);
+  }
+
+  static Future<void> saveCollectionsJson(String json) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_collectionsKey, json);
+  }
+
+  static Future<String?> loadCollectionsJson() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_collectionsKey);
+  }
+
+  static Future<void> saveCollectionDetailJson(int id, String json) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('$_collectionDetailPrefix$id', json);
+  }
+
+  static Future<String?> loadCollectionDetailJson(int id) async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString('$_collectionDetailPrefix$id');
+  }
+
+  static Future<void> saveRecipeDetailJson(int id, String json) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('$_recipeDetailPrefix$id', json);
+  }
+
+  static Future<String?> loadRecipeDetailJson(int id) async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString('$_recipeDetailPrefix$id');
   }
 
   static Future<void> enqueuePendingActivity(Map<String, dynamic> payload) async {

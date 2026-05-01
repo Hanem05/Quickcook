@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
         ]);
         $middleware->api(append: [
+            \App\Http\Middleware\AddRequestCorrelationId::class,
             \App\Http\Middleware\MonitorApiUsage::class,
         ]);
     })
@@ -32,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
                     'status_code' => 500,
                     'severity' => $severity,
                     'error_type' => (new \ReflectionClass($e))->getShortName(),
+                    'request_id' => request()?->attributes?->get('request_id'),
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);

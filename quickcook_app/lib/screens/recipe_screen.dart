@@ -261,27 +261,33 @@ class _RecipeScreenState extends State<RecipeScreen> {
 
   Widget _metaChip(String text, IconData icon) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: cs.outlineVariant),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: cs.onSurfaceVariant),
-          const SizedBox(width: 5),
-          Text(
-            text,
-            style: TextStyle(
-              color: cs.onSurfaceVariant,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: cs.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 12, color: cs.onSurfaceVariant),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 10,
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -344,25 +350,26 @@ class _RecipeScreenState extends State<RecipeScreen> {
       child: Container(
         decoration: BoxDecoration(
           color: cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: cs.outlineVariant),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(
-                Theme.of(context).brightness == Brightness.dark ? 0.28 : 0.04,
+                Theme.of(context).brightness == Brightness.dark ? 0.22 : 0.05,
               ),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
+        clipBehavior: Clip.antiAlias,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              flex: 6,
+            AspectRatio(
+              aspectRatio: 4 / 3,
               child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
                 child: recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
                     ? CachedNetworkImage(
                         imageUrl: recipe.imageUrl!,
@@ -385,7 +392,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                           color: cs.surfaceContainerLow,
                           child: Icon(
                             Icons.restaurant_menu_rounded,
-                            size: 42,
+                            size: 40,
                             color: cs.onSurfaceVariant,
                           ),
                         ),
@@ -394,16 +401,15 @@ class _RecipeScreenState extends State<RecipeScreen> {
                         color: cs.surfaceContainerLow,
                         child: Icon(
                           Icons.restaurant_menu_rounded,
-                          size: 42,
+                          size: 40,
                           color: cs.onSurfaceVariant,
                         ),
                       ),
               ),
             ),
             Expanded(
-              flex: 7,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -411,8 +417,8 @@ class _RecipeScreenState extends State<RecipeScreen> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: cs.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
+                          color: cs.primary.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           recipe.category!,
@@ -420,45 +426,56 @@ class _RecipeScreenState extends State<RecipeScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: cs.primary,
-                            fontSize: 10.5,
+                            fontSize: 10,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
-                    const SizedBox(height: 8),
-                    Text(
-                      recipe.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 16,
-                        height: 1.2,
-                        fontWeight: FontWeight.w900,
-                        color: cs.onSurface,
+                    if (recipe.category != null && recipe.category!.trim().isNotEmpty)
+                      const SizedBox(height: 6),
+                    SizedBox(
+                      height: 34,
+                      child: Text(
+                        recipe.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.25,
+                          fontWeight: FontWeight.w800,
+                          color: cs.onSurface,
+                          letterSpacing: -0.2,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     if (recipe.cookingTimeMinutes != null || recipe.difficulty != null)
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (recipe.difficulty != null)
-                            _metaChip(
-                              recipe.difficulty!.toUpperCase(),
-                              Icons.speed_rounded,
+                            Expanded(
+                              child: _metaChip(
+                                recipe.difficulty!.toUpperCase(),
+                                Icons.speed_rounded,
+                              ),
                             ),
+                          if (recipe.difficulty != null &&
+                              recipe.cookingTimeMinutes != null)
+                            const SizedBox(width: 6),
                           if (recipe.cookingTimeMinutes != null)
-                            _metaChip(
-                              '${recipe.cookingTimeMinutes} min',
-                              Icons.timer_outlined,
+                            Expanded(
+                              child: _metaChip(
+                                '${recipe.cookingTimeMinutes} min',
+                                Icons.timer_outlined,
+                              ),
                             ),
                         ],
                       ),
                     const Spacer(),
                     SizedBox(
                       width: double.infinity,
-                      height: 38,
+                      height: 36,
                       child: ElevatedButton.icon(
                         onPressed: (isSaved || isSaving)
                             ? null
@@ -479,7 +496,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                           size: 16,
                         ),
                         label: Text(
-                          isSaved ? "Saved" : "Save",
+                          isSaved ? 'Saved' : 'Save',
                           style: const TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 12,
@@ -494,6 +511,38 @@ class _RecipeScreenState extends State<RecipeScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _compactFilterDropdown<T>({
+    required ColorScheme cs,
+    required String label,
+    required Widget child,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: cs.onSurfaceVariant,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: cs.outlineVariant),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: child,
+        ),
+      ],
     );
   }
 
@@ -532,41 +581,48 @@ class _RecipeScreenState extends State<RecipeScreen> {
               children: [
                 /// SEARCH FIELD
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 10),
                   child: TextField(
                     controller: searchController,
                     style: TextStyle(
                       color: cs.onSurface,
                       fontWeight: FontWeight.w600,
+                      fontSize: 14,
                     ),
                     decoration: InputDecoration(
+                      isDense: true,
                       hintText: "Search your matches...",
                       hintStyle: TextStyle(
                         color: cs.onSurfaceVariant,
                         fontWeight: FontWeight.w500,
+                        fontSize: 14,
                       ),
                       filled: true,
                       fillColor: cs.surfaceContainerHigh,
                       prefixIcon: Icon(
                         Icons.search_rounded,
                         color: cs.onSurfaceVariant,
+                        size: 22,
                       ),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(color: cs.outlineVariant),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(color: cs.outlineVariant),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(14),
                         borderSide: const BorderSide(
                           color: primaryBrand,
                           width: 2,
                         ),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 10,
+                      ),
                     ),
                     onChanged: filterRecipes,
                   ),
@@ -574,7 +630,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
 
                 /// CATEGORY FILTER PIPS
                 SizedBox(
-                  height: 48,
+                  height: 40,
                   child: ListView.builder(
                     scrollDirection: Axis.horizontal,
                     physics: const BouncingScrollPhysics(),
@@ -589,7 +645,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           margin: const EdgeInsets.symmetric(horizontal: 4),
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                           decoration: BoxDecoration(
                             color: isSelected ? primaryBrand : cs.surfaceContainerHigh,
                             borderRadius: BorderRadius.circular(24),
@@ -606,7 +662,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                               fontWeight: isSelected
                                   ? FontWeight.w800
                                   : FontWeight.w600,
-                              fontSize: 14,
+                              fontSize: 13,
                             ),
                           ),
                         ),
@@ -614,35 +670,75 @@ class _RecipeScreenState extends State<RecipeScreen> {
                     },
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      DropdownButton<String>(
-                        value: selectedDifficulty,
-                        items: const [
-                          DropdownMenuItem(value: 'All', child: Text('All Difficulty')),
-                          DropdownMenuItem(value: 'easy', child: Text('Easy')),
-                          DropdownMenuItem(value: 'medium', child: Text('Medium')),
-                          DropdownMenuItem(value: 'hard', child: Text('Hard')),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) filterByDifficulty(v);
-                        },
+                      Expanded(
+                        child: _compactFilterDropdown(
+                          cs: cs,
+                          label: 'Difficulty',
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              isDense: true,
+                              value: selectedDifficulty,
+                              borderRadius: BorderRadius.circular(12),
+                              style: TextStyle(
+                                color: cs.onSurface,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'All', child: Text('All')),
+                                DropdownMenuItem(value: 'easy', child: Text('Easy')),
+                                DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                                DropdownMenuItem(value: 'hard', child: Text('Hard')),
+                              ],
+                              onChanged: (v) {
+                                if (v != null) filterByDifficulty(v);
+                              },
+                            ),
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 16),
-                      DropdownButton<int?>(
-                        value: maxCookingTime,
-                        hint: const Text('Cooking Time'),
-                        items: const [
-                          DropdownMenuItem<int?>(value: null, child: Text('Any Time')),
-                          DropdownMenuItem<int?>(value: 20, child: Text('<= 20 min')),
-                          DropdownMenuItem<int?>(value: 30, child: Text('<= 30 min')),
-                          DropdownMenuItem<int?>(value: 45, child: Text('<= 45 min')),
-                          DropdownMenuItem<int?>(value: 60, child: Text('<= 60 min')),
-                        ],
-                        onChanged: (v) => filterByMaxCookingTime(v),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _compactFilterDropdown(
+                          cs: cs,
+                          label: 'Max time',
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<int?>(
+                              isExpanded: true,
+                              isDense: true,
+                              value: maxCookingTime,
+                              borderRadius: BorderRadius.circular(12),
+                              hint: Text(
+                                'Any',
+                                style: TextStyle(
+                                  color: cs.onSurfaceVariant,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              style: TextStyle(
+                                color: cs.onSurface,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                              items: const [
+                                DropdownMenuItem<int?>(value: null, child: Text('Any')),
+                                DropdownMenuItem<int?>(value: 20, child: Text('≤ 20 min')),
+                                DropdownMenuItem<int?>(value: 30, child: Text('≤ 30 min')),
+                                DropdownMenuItem<int?>(value: 45, child: Text('≤ 45 min')),
+                                DropdownMenuItem<int?>(value: 60, child: Text('≤ 60 min')),
+                              ],
+                              onChanged: (v) => filterByMaxCookingTime(v),
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -697,10 +793,10 @@ class _RecipeScreenState extends State<RecipeScreen> {
                                 itemCount: filteredRecipes.length,
                                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                                   crossAxisCount: 2,
-                                  mainAxisSpacing: 14,
-                                  crossAxisSpacing: 14,
-                                  // Taller cards prevent bottom overflow on smaller emulator widths.
-                                  childAspectRatio: 0.58,
+                                  mainAxisSpacing: 12,
+                                  crossAxisSpacing: 12,
+                                  // Slightly wider vs height: compact cards; content uses Spacer so Save aligns.
+                                  childAspectRatio: 0.66,
                                 ),
                                 itemBuilder: (context, index) {
                                   return _buildMatchedRecipeGridCard(filteredRecipes[index]);

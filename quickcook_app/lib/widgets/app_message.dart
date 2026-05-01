@@ -7,6 +7,8 @@ class AppMessage {
     BuildContext context, {
     required String text,
     AppMessageType type = AppMessageType.info,
+    String? actionLabel,
+    VoidCallback? onAction,
   }) {
     final cs = Theme.of(context).colorScheme;
     final (bg, fg, icon) = _resolveStyle(cs, type);
@@ -17,6 +19,13 @@ class AppMessage {
         backgroundColor: bg,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        action: (actionLabel != null && onAction != null)
+            ? SnackBarAction(
+                label: actionLabel,
+                textColor: fg,
+                onPressed: onAction,
+              )
+            : null,
         content: Row(
           children: [
             Icon(icon, size: 18, color: fg),

@@ -197,79 +197,87 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 24),
 
-                              TextFormField(
-                                controller: emailController,
-                                style: TextStyle(
-                                  color: cs.onSurface,
-                                  fontWeight: FontWeight.w600,
+                              Semantics(
+                                label: 'Email address input',
+                                textField: true,
+                                child: TextFormField(
+                                  controller: emailController,
+                                  style: TextStyle(
+                                    color: cs.onSurface,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  keyboardType: TextInputType.emailAddress,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(
+                                      RegExp(r'[\x20-\x7E]'),
+                                    ),
+                                  ],
+                                  decoration: InputDecoration(
+                                    hintText: "Email Address",
+                                    filled: true,
+                                    fillColor: cs.surfaceContainerLow,
+                                    prefixIcon: Icon(
+                                      Icons.email_outlined,
+                                      color: cs.onSurfaceVariant,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                  ),
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return "Email is required";
+                                    }
+                                    if (!value.contains("@")) {
+                                      return "Please enter a valid email";
+                                    }
+                                    return null;
+                                  },
                                 ),
-                                keyboardType: TextInputType.emailAddress,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x20-\x7E]'),
-                                  ),
-                                ],
-                                decoration: InputDecoration(
-                                  hintText: "Email Address",
-                                  filled: true,
-                                  fillColor: cs.surfaceContainerLow,
-                                  prefixIcon: Icon(
-                                    Icons.email_outlined,
-                                    color: cs.onSurfaceVariant,
-                                  ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                ),
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return "Email is required";
-                                  }
-                                  if (!value.contains("@")) {
-                                    return "Please enter a valid email";
-                                  }
-                                  return null;
-                                },
                               ),
 
                               const SizedBox(height: 14),
 
-                              TextFormField(
-                                controller: passwordController,
-                                obscureText: true,
-                                style: TextStyle(
-                                  color: cs.onSurface,
-                                  fontWeight: FontWeight.w600,
+                              Semantics(
+                                label: 'Password input',
+                                textField: true,
+                                child: TextFormField(
+                                  controller: passwordController,
+                                  obscureText: true,
+                                  style: TextStyle(
+                                    color: cs.onSurface,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(
+                                      RegExp(r'[\x20-\x7E]'),
+                                    ),
+                                  ],
+                                  decoration: InputDecoration(
+                                    hintText: "Password",
+                                    filled: true,
+                                    fillColor: cs.surfaceContainerLow,
+                                    prefixIcon: Icon(
+                                      Icons.lock_outline_rounded,
+                                      color: cs.onSurfaceVariant,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                  ),
+                                  onFieldSubmitted: (_) => login(),
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return "Password is required";
+                                    }
+                                    if (value.length < 6) {
+                                      return "Minimum 6 characters";
+                                    }
+                                    return null;
+                                  },
                                 ),
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x20-\x7E]'),
-                                  ),
-                                ],
-                                decoration: InputDecoration(
-                                  hintText: "Password",
-                                  filled: true,
-                                  fillColor: cs.surfaceContainerLow,
-                                  prefixIcon: Icon(
-                                    Icons.lock_outline_rounded,
-                                    color: cs.onSurfaceVariant,
-                                  ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                ),
-                                onFieldSubmitted: (_) => login(),
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return "Password is required";
-                                  }
-                                  if (value.length < 6) {
-                                    return "Minimum 6 characters";
-                                  }
-                                  return null;
-                                },
                               ),
 
                               const SizedBox(height: 8),
@@ -297,7 +305,10 @@ class _LoginScreenState extends State<LoginScreen> {
                               SizedBox(
                                 width: double.infinity,
                                 height: 56,
-                                child: DecoratedBox(
+                                child: Semantics(
+                                  button: true,
+                                  label: 'Sign in',
+                                  child: DecoratedBox(
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(16),
                                     gradient: LinearGradient(
@@ -317,35 +328,36 @@ class _LoginScreenState extends State<LoginScreen> {
                                         ),
                                     ],
                                   ),
-                                  child: ElevatedButton(
-                                    onPressed: isLoading ? null : login,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.transparent,
-                                      shadowColor: Colors.transparent,
-                                      foregroundColor: cs.onPrimary,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(16),
+                                    child: ElevatedButton(
+                                      onPressed: isLoading ? null : login,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.transparent,
+                                        shadowColor: Colors.transparent,
+                                        foregroundColor: cs.onPrimary,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        elevation: 0,
                                       ),
-                                      elevation: 0,
+                                      child: isLoading
+                                          ? SizedBox(
+                                              height: 24,
+                                              width: 24,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.5,
+                                                color: cs.onPrimary,
+                                              ),
+                                            )
+                                          : Text(
+                                              "Sign In",
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 16,
+                                                letterSpacing: 0.4,
+                                                color: cs.onPrimary,
+                                              ),
+                                            ),
                                     ),
-                                    child: isLoading
-                                        ? SizedBox(
-                                            height: 24,
-                                            width: 24,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2.5,
-                                              color: cs.onPrimary,
-                                            ),
-                                          )
-                                        : Text(
-                                            "Sign In",
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w800,
-                                              fontSize: 16,
-                                              letterSpacing: 0.4,
-                                              color: cs.onPrimary,
-                                            ),
-                                          ),
                                   ),
                                 ),
                               ),

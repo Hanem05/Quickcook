@@ -17,7 +17,9 @@ import 'app_logger.dart';
 
 class ApiService {
   static String? token;
-  static const Duration _httpTimeout = Duration(seconds: 6);
+  /// Longer in debug so slow Docker / first cold requests do not look like "cannot connect".
+  static Duration get _httpTimeout =>
+      kDebugMode ? const Duration(seconds: 20) : const Duration(seconds: 8);
   static SharedPreferences? _prefs;
   static String? _authToken;
 
@@ -64,16 +66,35 @@ class ApiService {
     return null;
   }
   /// Production: `flutter build apk --dart-define=API_BASE_URL=https://your-host/api`
+  ///
+  /// Dev overrides:
+  /// - Full URL: `--dart-define=API_BASE_URL=http://192.168.1.10:8000/api`
+  /// - Host + port (emulator default host is 10.0.2.2 → your PC):
+  ///   `flutter run --dart-define=API_HOST=192.168.1.10` (physical phone on same Wi‑Fi)
+  /// - Port if not 8000: `--dart-define=API_PORT=8000`
   static final String baseUrl = _resolveBaseUrl();
 
   static String _resolveBaseUrl() {
     const override = String.fromEnvironment('API_BASE_URL', defaultValue: '');
     if (override.isNotEmpty) return override;
-    if (kIsWeb) return 'http://127.0.0.1:8000/api';
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return 'http://10.0.2.2:8000/api';
+
+    const hostOverride = String.fromEnvironment('API_HOST', defaultValue: '');
+    const portOverride = String.fromEnvironment('API_PORT', defaultValue: '8000');
+    final port = portOverride.trim().isEmpty ? '8000' : portOverride.trim();
+
+    final String host;
+    if (hostOverride.trim().isNotEmpty) {
+      host = hostOverride.trim();
+    } else if (kIsWeb) {
+      host = '127.0.0.1';
+    } else if (defaultTargetPlatform == TargetPlatform.android) {
+      // Android emulator: 10.0.2.2 maps to the host machine (Docker on :8000).
+      host = '10.0.2.2';
+    } else {
+      host = '127.0.0.1';
     }
-    return 'http://127.0.0.1:8000/api';
+
+    return 'http://$host:$port/api';
   }
 
   static Future<String?> getToken() async {
@@ -343,34 +364,61 @@ class ApiService {
 
     debugPrint("CACHE MISS: recipe $id");
 
-    final response = await http
-        .get(
-      Uri.parse("$baseUrl/recipes/$id"),
-      headers: await _getHeaders(),
-    )
-        .timeout(_httpTimeout);
+    try {
+      final online = await ConnectivityService.isOnline;
+      if (!online) {
+        final cached = await OfflineCacheService.loadRecipeDetailJson(id);
+        if (cached != null && cached.isNotEmpty) {
+          final result = Recipe.fromJson(jsonDecode(cached));
+          _cache[key] = result;
+          return result;
+        }
+      }
 
-    if (response.statusCode == 200) {
-      final result = Recipe.fromJson(jsonDecode(response.body));
+      final response = await http
+          .get(
+        Uri.parse("$baseUrl/recipes/$id"),
+        headers: await _getHeaders(),
+      )
+          .timeout(_httpTimeout);
 
-      _cache[key] = result; // ✅ CACHE
-
-      return result;
+      if (response.statusCode == 200) {
+        await OfflineCacheService.saveRecipeDetailJson(id, response.body);
+        final result = Recipe.fromJson(jsonDecode(response.body));
+        _cache[key] = result; // ✅ CACHE
+        return result;
+      }
+    } catch (_) {
+      final cached = await OfflineCacheService.loadRecipeDetailJson(id);
+      if (cached != null && cached.isNotEmpty) {
+        final result = Recipe.fromJson(jsonDecode(cached));
+        _cache[key] = result;
+        return result;
+      }
     }
 
     throw Exception("Failed to load recipe");
   }
 
   static Future<List<Recipe>> fetchFavorite() async {
-    final response = await http
-        .get(
-      Uri.parse("$baseUrl/favorites"),
-      headers: await _getHeaders(),
-    )
-        .timeout(_httpTimeout);
-    if (response.statusCode == 200) {
-      List data = jsonDecode(response.body);
-      return data.map((e) => Recipe.fromJson(e['recipe'])).toList();
+    try {
+      final response = await http
+          .get(
+        Uri.parse("$baseUrl/favorites"),
+        headers: await _getHeaders(),
+      )
+          .timeout(_httpTimeout);
+      if (response.statusCode == 200) {
+        await OfflineCacheService.saveFavoritesJson(response.body);
+        List data = jsonDecode(response.body);
+        return data.map((e) => Recipe.fromJson(e['recipe'])).toList();
+      }
+    } catch (_) {
+      final raw = await OfflineCacheService.loadFavoritesJson();
+      if (raw != null && raw.isNotEmpty) {
+        List data = jsonDecode(raw);
+        return data.map((e) => Recipe.fromJson(e['recipe'])).toList();
+      }
     }
     throw Exception("Failed to load favorites");
   }
@@ -402,6 +450,7 @@ class ApiService {
         _readErrorMessage(response.body) ?? 'Failed to add favorite',
       );
     }
+    _cache.remove('favorites');
   }
 
   static Future<void> removeFavorite(int recipeId) async {
@@ -413,6 +462,7 @@ class ApiService {
         .timeout(_httpTimeout);
     if (response.statusCode != 200)
       throw Exception("Failed to remove favorite");
+    _cache.remove('favorites');
   }
 
   static Future<AdminStats> fetchAdminStats() async {
@@ -1309,19 +1359,24 @@ class ApiService {
 
   // 🔥 FIX #1: GET COLLECTIONS
   static Future<List<dynamic>> getCollections() async {
-    // 1. Get the real headers that include the token from memory
-    final headers = await _getHeaders();
+    try {
+      final response = await http.get(
+        Uri.parse("$baseUrl/collections"),
+        headers: await _getHeaders(),
+      ).timeout(_httpTimeout);
 
-    final response = await http.get(
-      Uri.parse("$baseUrl/collections"),
-      headers: headers, // ✅ Use the full headers here
-    );
-
-    if (response.statusCode == 200) {
-      return json.decode(utf8.decode(response.bodyBytes));
-    } else {
-      throw Exception("Failed to load collections: ${response.statusCode}");
+      if (response.statusCode == 200) {
+        final raw = utf8.decode(response.bodyBytes);
+        await OfflineCacheService.saveCollectionsJson(raw);
+        return json.decode(raw);
+      }
+    } catch (_) {
+      final raw = await OfflineCacheService.loadCollectionsJson();
+      if (raw != null && raw.isNotEmpty) {
+        return json.decode(raw);
+      }
     }
+    throw Exception("Failed to load collections");
   }
 
   static Future<void> createCollection(String name) async {
@@ -1338,6 +1393,7 @@ class ApiService {
         _readErrorMessage(response.body) ?? 'Failed to create collection',
       );
     }
+    _cache.remove('collections');
   }
 
   // 🔥 FIX: ADD RECIPE TO COLLECTION
@@ -1363,13 +1419,22 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getCollectionDetail(int id) async {
-    final response = await http.get(
-      Uri.parse("$baseUrl/collections/$id"),
-      headers: await _getHeaders(),
-    );
+    try {
+      final response = await http.get(
+        Uri.parse("$baseUrl/collections/$id"),
+        headers: await _getHeaders(),
+      ).timeout(_httpTimeout);
 
-    if (response.statusCode == 200) {
-      return json.decode(utf8.decode(response.bodyBytes));
+      if (response.statusCode == 200) {
+        final raw = utf8.decode(response.bodyBytes);
+        await OfflineCacheService.saveCollectionDetailJson(id, raw);
+        return json.decode(raw);
+      }
+    } catch (_) {
+      final raw = await OfflineCacheService.loadCollectionDetailJson(id);
+      if (raw != null && raw.isNotEmpty) {
+        return json.decode(raw);
+      }
     }
     throw Exception("Failed to load recipes in this collection");
   }

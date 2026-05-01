@@ -58,7 +58,10 @@ class SystemEndToEndTest extends TestCase
         $this->createRecipe();
 
         $this->getJson('/api/ingredients')->assertOk();
-        $this->getJson('/api/recipes')->assertOk()->assertJsonStructure(['data']);
+        $this->getJson('/api/recipes')
+            ->assertOk()
+            ->assertHeader('X-Request-ID')
+            ->assertJsonStructure(['data']);
         $this->getJson('/api/search')->assertOk();
     }
 

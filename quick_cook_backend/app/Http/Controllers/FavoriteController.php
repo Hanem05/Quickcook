@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Favorite;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class FavoriteController extends Controller
 {
@@ -22,27 +23,36 @@ class FavoriteController extends Controller
         $uid = $request->user()->id;
         $rid = (int) $request->recipe_id;
 
-        $existing = Favorite::query()
-            ->where('user_id', $uid)
-            ->where('recipe_id', $rid)
-            ->first();
+        $created = DB::transaction(function () use ($uid, $rid) {
+            $existing = Favorite::query()
+                ->where('user_id', $uid)
+                ->where('recipe_id', $rid)
+                ->lockForUpdate()
+                ->first();
 
-        if ($existing !== null) {
+            if ($existing !== null) {
+                return ['favorite' => $existing, 'duplicate' => true];
+            }
+
+            $favorite = Favorite::create([
+                'user_id' => $uid,
+                'recipe_id' => $rid,
+            ]);
+
+            return ['favorite' => $favorite, 'duplicate' => false];
+        });
+
+        if ($created['duplicate']) {
             return response()->json([
                 'message' => 'Already in favorites',
-                'favorite' => $existing,
+                'favorite' => $created['favorite'],
                 'duplicate' => true,
             ], 200);
         }
 
-        $favorite = Favorite::create([
-            'user_id' => $uid,
-            'recipe_id' => $rid,
-        ]);
-
         return response()->json([
             'message' => 'Recipe added to favorites',
-            'favorite' => $favorite,
+            'favorite' => $created['favorite'],
             'duplicate' => false,
         ], 201);
     }
@@ -66,17 +76,25 @@ class FavoriteController extends Controller
 
     public function destroy(Request $request, $id)
     {
-        $favorite = Favorite::where('user_id', $request->user()->id)
-            ->where('recipe_id', $id)
-            ->first();
+        $deleted = DB::transaction(function () use ($request, $id) {
+            $favorite = Favorite::where('user_id', $request->user()->id)
+                ->where('recipe_id', $id)
+                ->lockForUpdate()
+                ->first();
 
-        if (!$favorite) {
+            if (! $favorite) {
+                return false;
+            }
+
+            $favorite->delete();
+            return true;
+        });
+
+        if (! $deleted) {
             return response()->json([
                 'message' => 'Favorite not found'
             ], 404);
         }
-
-        $favorite->delete();
 
         return response()->json([
             'message' => 'Removed from favorites'

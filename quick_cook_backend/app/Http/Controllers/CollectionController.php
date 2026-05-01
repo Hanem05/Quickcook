@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class CollectionController extends Controller
 {
@@ -37,21 +38,27 @@ class CollectionController extends Controller
             return response()->json(['message' => 'Folder name cannot be empty.'], 422);
         }
 
-        $normalized = mb_strtolower($name);
-        $duplicate = $user->collections()
-            ->whereRaw('LOWER(TRIM(name)) = ?', [$normalized])
-            ->exists();
+        $created = DB::transaction(function () use ($user, $name) {
+            $normalized = mb_strtolower($name);
+            $duplicate = $user->collections()
+                ->whereRaw('LOWER(TRIM(name)) = ?', [$normalized])
+                ->lockForUpdate()
+                ->exists();
 
-        if ($duplicate) {
+            if ($duplicate) {
+                return null;
+            }
+
+            return $user->collections()->create(['name' => $name]);
+        });
+
+        if ($created === null) {
             return response()->json([
                 'message' => 'You already have a folder with this name.',
             ], 422);
         }
 
-        return response()->json(
-            $user->collections()->create(['name' => $name]),
-            201
-        );
+        return response()->json($created, 201);
     }
 
     public function addRecipe(Request $request)
@@ -67,21 +74,29 @@ class CollectionController extends Controller
             'recipe_id' => 'required|integer|exists:recipes,id',
         ]);
 
-        $collection = $user->collections()
-            ->find($request->collection_id);
+        $result = DB::transaction(function () use ($user, $request) {
+            $collection = $user->collections()
+                ->lockForUpdate()
+                ->find($request->collection_id);
 
-        if (! $collection) {
-            return response()->json(['error' => 'Collection not found'], 404);
+            if (! $collection) {
+                return ['error' => 'Collection not found', 'status' => 404];
+            }
+
+            $recipeId = (int) $request->recipe_id;
+            $already = $collection->recipes()->where('recipes.id', $recipeId)->exists();
+            $collection->recipes()->syncWithoutDetaching([$recipeId]);
+
+            return ['already' => $already, 'status' => 200];
+        });
+
+        if (($result['status'] ?? 200) === 404) {
+            return response()->json(['error' => $result['error']], 404);
         }
 
-        $recipeId = (int) $request->recipe_id;
-        $already = $collection->recipes()->where('recipes.id', $recipeId)->exists();
-
-        $collection->recipes()->syncWithoutDetaching([$recipeId]);
-
         return response()->json([
-            'message' => $already ? 'Recipe already exists in this collection' : 'Recipe added successfully',
-            'duplicate' => $already,
+            'message' => $result['already'] ? 'Recipe already exists in this collection' : 'Recipe added successfully',
+            'duplicate' => $result['already'],
         ]);
     }
 

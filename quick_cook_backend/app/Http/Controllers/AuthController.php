@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
@@ -10,6 +11,16 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    private function tokenExpiry(): ?Carbon
+    {
+        $minutes = (int) config('sanctum.expiration');
+        if ($minutes <= 0) {
+            return null;
+        }
+
+        return now()->addMinutes($minutes);
+    }
+
     public function register(Request $request)
     {
         $request->validate([
@@ -24,7 +35,11 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
         ]);
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = $user->createToken(
+            'auth_token',
+            ['*'],
+            $this->tokenExpiry()
+        )->plainTextToken;
 
         return response()->json([
             'user' => $user,
@@ -47,7 +62,11 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = $user->createToken(
+            'auth_token',
+            ['*'],
+            $this->tokenExpiry()
+        )->plainTextToken;
 
         return response()->json([
             'user' => $user,

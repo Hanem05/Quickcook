@@ -71,16 +71,25 @@ class _HomeScreenState extends State<HomeScreen> {
     _connSub = Connectivity().onConnectivityChanged.listen((_) {
       _syncOfflineFlag();
     });
-    loadIngredients();
-    loadRecommendations();
-    loadRecent();
-    loadPersonalizedFeed();
-    loadSearchAssist();
-    loadSprint9Signals();
+    unawaited(_bootstrapHome());
     ApiService.syncPendingActivities();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       promptAppUpdateIfNeeded(context);
     });
+  }
+
+  Future<void> _bootstrapHome() async {
+    // Stage critical data first so first paint stays responsive.
+    await Future.wait([
+      loadIngredients(),
+      loadRecommendations(),
+      loadRecent(),
+    ]);
+
+    // Defer non-critical sections.
+    unawaited(loadPersonalizedFeed());
+    unawaited(loadSearchAssist());
+    unawaited(loadSprint9Signals());
   }
 
   Future<void> loadSprint9Signals() async {
@@ -211,7 +220,16 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     } catch (e) {
-      if (mounted) setState(() => isLoadingRecommendations = false);
+      if (!mounted) return;
+      setState(() => isLoadingRecommendations = false);
+      _showSnackBar(
+        'Could not load recommendations.',
+        isError: true,
+        actionLabel: 'Retry',
+        onAction: () {
+          unawaited(loadRecommendations(force: true));
+        },
+      );
     }
   }
 
@@ -477,11 +495,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showSnackBar(String message, {bool isError = false}) {
+  void _showSnackBar(
+    String message, {
+    bool isError = false,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
     AppMessage.show(
       context,
       text: message,
       type: isError ? AppMessageType.error : AppMessageType.success,
+      actionLabel: actionLabel,
+      onAction: onAction,
     );
   }
 
@@ -507,6 +532,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           IconButton(
             icon: Icon(Icons.favorite_outline_rounded, color: cs.onSurface),
+            tooltip: 'Open favorites',
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const FavoritesScreen()),
@@ -514,6 +540,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             icon: Icon(Icons.person_outline_rounded, color: cs.onSurface),
+            tooltip: 'Open profile',
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const ProfileScreen()),
@@ -521,6 +548,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.logout_rounded, color: Colors.redAccent),
+            tooltip: 'Logout',
             onPressed: () async {
               await ApiService.logout();
               if (!context.mounted) return;

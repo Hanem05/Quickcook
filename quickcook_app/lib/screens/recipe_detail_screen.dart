@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart'; // ✅ ADDED
 
 import '../models/recipe.dart';
 import '../services/api_service.dart';
+import '../widgets/app_message.dart';
 
 class RecipeDetailScreen extends StatefulWidget {
   final int recipeId;
@@ -117,18 +118,10 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
-    final cs = Theme.of(context).colorScheme;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        width: 400,
-        backgroundColor: isError ? Colors.redAccent : cs.inverseSurface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        content: Text(
-          message,
-          style: TextStyle(fontWeight: FontWeight.w600, color: cs.onInverseSurface),
-        ),
-      ),
+    AppMessage.show(
+      context,
+      text: message,
+      type: isError ? AppMessageType.error : AppMessageType.success,
     );
   }
 
@@ -216,6 +209,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                 color: cs.onSurface,
                 size: 20,
               ),
+              tooltip: 'Back',
               onPressed: () => Navigator.pop(context),
             ),
           ),
@@ -264,21 +258,25 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                           const SizedBox(height: 20),
                           SizedBox(
                             width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: () => _showCollectionModal(),
-                              icon: const Icon(Icons.bookmark_rounded),
-                              label: const Text("Save to Collection"),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryBrand,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 14,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
+                            child: Semantics(
+                              button: true,
+                              label: 'Save recipe to collection',
+                              child: ElevatedButton.icon(
+                                onPressed: () => _showCollectionModal(),
+                                icon: const Icon(Icons.bookmark_rounded),
+                                label: const Text("Save to Collection"),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryBrand,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
                                 ),
                               ),
-                            ),
+                            )
                           ),
                           const SizedBox(height: 40),
                           _buildSectionHeader("Ingredients"),
@@ -494,12 +492,16 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.all(4),
-                  child: Icon(
-                    isFilled ? Icons.star_rounded : Icons.star_outline_rounded,
-                    color: isFilled
-                        ? warningAmber
-                        : cs.onSurfaceVariant.withOpacity(0.35),
-                    size: 42,
+                  child: Semantics(
+                    button: true,
+                    label: 'Rate ${index + 1} stars',
+                    child: Icon(
+                      isFilled ? Icons.star_rounded : Icons.star_outline_rounded,
+                      color: isFilled
+                          ? warningAmber
+                          : cs.onSurfaceVariant.withOpacity(0.35),
+                      size: 42,
+                    ),
                   ),
                 ),
               );
