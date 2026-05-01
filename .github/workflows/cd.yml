@@ -41,7 +41,21 @@ jobs:
       - name: Enforce minimum PHPUnit test count (70+)
         working-directory: quick_cook_backend
         run: |
-          php -r "$xml = simplexml_load_file('build/phpunit-report.xml'); if (!$xml) {fwrite(STDERR, 'Unable to read PHPUnit report'.PHP_EOL); exit(1);} $attrs = $xml->attributes(); $tests = isset($attrs['tests']) ? (int) $attrs['tests'] : 0; echo 'PHPUnit tests executed: '.$tests.PHP_EOL; if ($tests < 70) {fwrite(STDERR, 'Expected at least 70 PHPUnit tests in CD.'.PHP_EOL); exit(1);}"
+          php <<'PHP'
+          <?php
+          $xml = simplexml_load_file('build/phpunit-report.xml');
+          if (! $xml) {
+              fwrite(STDERR, "Unable to read PHPUnit report".PHP_EOL);
+              exit(1);
+          }
+          $attrs = $xml->attributes();
+          $tests = isset($attrs['tests']) ? (int) $attrs['tests'] : 0;
+          echo 'PHPUnit tests executed: '.$tests.PHP_EOL;
+          if ($tests < 70) {
+              fwrite(STDERR, "Expected at least 70 PHPUnit tests in CD.".PHP_EOL);
+              exit(1);
+          }
+          PHP
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
