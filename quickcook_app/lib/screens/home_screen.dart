@@ -47,8 +47,10 @@ class _HomeScreenState extends State<HomeScreen> {
   bool cookNowOnly = false;
 
   bool isLoadingRecipes = false;
-  bool isLoadingIngredients = true;
-  bool isLoadingRecommendations = true;
+  // Default to false — render UI immediately. Data arrives in background and
+  // populates without showing blocking spinners.
+  bool isLoadingIngredients = false;
+  bool isLoadingRecommendations = false;
   bool isLoadingRecent = false;
   bool isLoadingFeed = false;
 
@@ -79,17 +81,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _bootstrapHome() async {
-    // Stage critical data first so first paint stays responsive.
-    await Future.wait([
-      loadIngredients(),
-      loadRecommendations(),
-      loadRecent(),
-    ]);
-
-    // Defer non-critical sections.
-    unawaited(loadPersonalizedFeed());
-    unawaited(loadSearchAssist());
-    unawaited(loadSprint9Signals());
+    // Render home quickly first; fetch only essential data on first paint.
+    // Heavier sections (personalized feed, search assist, smart signals) are
+    // deferred until after the user has seen the screen.
+    unawaited(loadRecent());
+    unawaited(loadRecommendations());
+    unawaited(loadIngredients());
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+      unawaited(loadPersonalizedFeed());
+      unawaited(loadSearchAssist());
+      unawaited(loadSprint9Signals());
+    });
   }
 
   Future<void> loadSprint9Signals() async {
@@ -193,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
           recentRecipes = data;
           isLoadingRecent = false;
         });
+        unawaited(_precacheRecipeImages(data));
       } else {
         setState(() => isLoadingRecent = false);
       }
@@ -214,6 +218,7 @@ class _HomeScreenState extends State<HomeScreen> {
         recommendedRecipes = data.take(_homeFeedRenderLimit).toList();
         isLoadingRecommendations = false;
       });
+      unawaited(_precacheRecipeImages(recommendedRecipes));
       if (recommendedRecipes.isNotEmpty) {
         await NotificationService.maybeShowTrendingReminder(
           recommendedRecipes.first.name,
@@ -292,15 +297,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> navigateToDetail(int recipeId) async {
+  Future<void> navigateToDetail(int recipeId, {Recipe? preview}) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => RecipeDetailScreen(recipeId: recipeId)),
+      MaterialPageRoute(
+        builder: (_) =>
+            RecipeDetailScreen(recipeId: recipeId, initialRecipe: preview),
+      ),
     );
-    loadRecent();
-    // Refresh in background so returning from details feels instant.
-    unawaited(loadRecommendations(force: true));
-    unawaited(loadPersonalizedFeed());
+    // Lightweight refresh only: avoid forcing recommendations/feed reloads,
+    // which previously caused repeated cold backend hits on every detail visit.
+    unawaited(loadRecent());
   }
 
   void filterIngredients(String query) {
@@ -401,65 +408,78 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> findRecipes() async {
     if (selectedIngredients.isEmpty) return;
-    setState(() => isLoadingRecipes = true);
-    try {
-      List<Recipe> recipesList = const <Recipe>[];
-      dynamic meta;
-      if (cookNowOnly) {
-        recipesList = await ApiService.fetchCookNowRecipes(selectedIngredients.toList());
-        meta = {'message': 'Showing ready-to-cook recipes only.'};
-      } else {
-        final result = await ApiService.matchRecipes(
-          selectedIngredients.toList(),
-          1,
-          null,
-        );
-        recipesList = List<Recipe>.from(result["recipes"] ?? const <Recipe>[]);
-        meta = result['meta'];
-      }
-      List<String> unmatchedIngredients = const [];
-      if (meta is Map) {
-        final raw = meta['unmatched_ingredients'];
-        if (raw is List) {
-          unmatchedIngredients = raw
-              .map((e) => e.toString().trim())
-              .where((e) => e.isNotEmpty)
-              .toList();
+
+    // INSTANT NAVIGATION:
+    //   Use cached match result if we already have it; otherwise hand the
+    //   ingredient list to RecipeScreen with an empty seed and let it fetch
+    //   itself. Either way, the user sees the screen change on the next
+    //   frame — no spinner on Home.
+    final ids = selectedIngredients.toList();
+    final cached = ApiService.cachedMatchRecipes(ids);
+    final seedRecipes = (cached?["recipes"] as List?)?.cast<Recipe>() ??
+        const <Recipe>[];
+
+    if (cookNowOnly) {
+      // "Cook Now" still needs the strict server check; fetch in BG and
+      // navigate when done. Keep the button spinner only for this branch.
+      setState(() => isLoadingRecipes = true);
+      try {
+        final cookNowList =
+            await ApiService.fetchCookNowRecipes(selectedIngredients.toList());
+        if (!mounted) return;
+        setState(() => isLoadingRecipes = false);
+        if (cookNowList.isEmpty) {
+          await _showMatchEmptyState(
+              {'message': 'Showing ready-to-cook recipes only.'});
+          return;
         }
-      }
-      if (!mounted) return;
-      setState(() => isLoadingRecipes = false);
-
-      if (recipesList.isEmpty) {
-        await _showMatchEmptyState(meta);
-        return;
-      }
-
-      if (!context.mounted) return;
-      if (unmatchedIngredients.isNotEmpty) {
-        final preview = unmatchedIngredients.take(3).join(', ');
-        final suffix = unmatchedIngredients.length > 3 ? ' and more' : '';
+        if (!context.mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => RecipeScreen(
+              recipes: cookNowList,
+              ingredientIds: ids,
+            ),
+          ),
+        );
+      } catch (e) {
+        if (mounted) setState(() => isLoadingRecipes = false);
+        final msg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
         _showSnackBar(
-          'No recipes yet for: $preview$suffix. Showing available matches.',
+          msg.isEmpty ? 'Could not load matching recipes.' : msg,
+          isError: true,
         );
       }
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => RecipeScreen(
-            recipes: recipesList,
-            ingredientIds: selectedIngredients.toList(),
-          ),
-        ),
-      );
-    } catch (e) {
-      if (mounted) setState(() => isLoadingRecipes = false);
-      final msg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+      return;
+    }
+
+    // Normal "Find Recipes" flow — go to the screen NOW.
+    if (!context.mounted) return;
+    final unmatched = (cached?['meta'] is Map)
+        ? ((cached!['meta']['unmatched_ingredients'] as List?)
+                ?.map((e) => e.toString().trim())
+                .where((e) => e.isNotEmpty)
+                .toList() ??
+            const <String>[])
+        : const <String>[];
+    if (unmatched.isNotEmpty) {
+      final preview = unmatched.take(3).join(', ');
+      final suffix = unmatched.length > 3 ? ' and more' : '';
       _showSnackBar(
-        msg.isEmpty ? 'Could not load matching recipes.' : msg,
-        isError: true,
+        'No recipes yet for: $preview$suffix. Showing available matches.',
       );
     }
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RecipeScreen(
+          recipes: seedRecipes,
+          ingredientIds: ids,
+          // RecipeScreen will fetch on init when the seed list is empty.
+        ),
+      ),
+    );
   }
 
   Future<void> _refreshComboSuggestions() async {
@@ -567,13 +587,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               children: [
                 Expanded(
-                  child: isLoadingIngredients
-                      ? Center(
-                          child: CircularProgressIndicator(
-                            color: cs.primary,
-                          ),
-                        )
-                      : RefreshIndicator(
+                  child: RefreshIndicator(
                           color: cs.primary,
                           onRefresh: () async {
                             await loadIngredients();
@@ -722,11 +736,57 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Friendly thumbnail shown while a remote image is being downloaded.
+  /// A subtle pulse with a chef icon — never a blank gray box.
+  Widget _imageLoadingPlaceholder(ColorScheme cs) {
+    return Container(
+      color: cs.surfaceContainerLow,
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.restaurant_menu_rounded,
+        size: 32,
+        color: cs.onSurfaceVariant.withOpacity(0.55),
+      ),
+    );
+  }
+
+  /// Shown when a recipe simply has no image (or the URL fails permanently).
+  Widget _imageEmptyPlaceholder(ColorScheme cs) {
+    return Container(
+      color: cs.surfaceContainerLow,
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.restaurant_menu_rounded,
+        size: 36,
+        color: cs.onSurfaceVariant,
+      ),
+    );
+  }
+
+  /// Pre-decodes the first batch of recipe images so they're already in
+  /// `ImageCache` by the time the home grid scrolls them into view.
+  Future<void> _precacheRecipeImages(List<Recipe> list) async {
+    final ctx = context;
+    if (!ctx.mounted) return;
+    for (final r in list.take(8)) {
+      final url = r.imageUrl;
+      if (url == null || url.trim().isEmpty) continue;
+      try {
+        await precacheImage(
+          CachedNetworkImageProvider(url, maxWidth: 480),
+          ctx,
+        );
+      } catch (_) {/* ignore single-image precache failures */}
+    }
+  }
+
   // ✅ FIXED: Added missing method
   Widget _buildRecentList() {
     final cs = Theme.of(context).colorScheme;
-    if (isLoadingRecent && recentRecipes.isEmpty) {
-      return Center(child: CircularProgressIndicator(color: cs.primary));
+    if (recentRecipes.isEmpty) {
+      // Don't reserve space when there's nothing yet — keeps the home compact
+      // and avoids visible loading spinners on first paint.
+      return const SizedBox.shrink();
     }
     return SizedBox(
       height: 220,
@@ -737,7 +797,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final recipe = recentRecipes[index];
           // Reuse your existing horizontal card logic here
           return GestureDetector(
-            onTap: () => navigateToDetail(recipe.id),
+            onTap: () => navigateToDetail(recipe.id, preview: recipe),
             child: Container(
               width: 180,
               margin: EdgeInsets.only(
@@ -757,19 +817,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(20),
                       ),
-                      child: recipe.imageUrl != null
+                      child: (recipe.imageUrl != null &&
+                              recipe.imageUrl!.trim().isNotEmpty)
                           ? CachedNetworkImage(
                               imageUrl: recipe.imageUrl!,
                               fit: BoxFit.cover,
                               width: double.infinity,
+                              fadeInDuration: const Duration(milliseconds: 220),
+                              fadeOutDuration: const Duration(milliseconds: 120),
+                              memCacheWidth: 480,
                               placeholder: (context, url) =>
-                                  Container(color: cs.surfaceContainerLow),
-                              errorWidget: (context, url, error) => Container(
-                                color: cs.surfaceContainerLow,
-                                child: Icon(Icons.restaurant, color: cs.onSurfaceVariant),
-                              ),
+                                  _imageLoadingPlaceholder(cs),
+                              errorWidget: (context, url, error) =>
+                                  _imageEmptyPlaceholder(cs),
                             )
-                          : Icon(Icons.restaurant, color: cs.onSurfaceVariant),
+                          : _imageEmptyPlaceholder(cs),
                     ),
                   ),
                   Padding(
@@ -794,73 +856,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildRecommendationsSection() {
-    final cs = Theme.of(context).colorScheme;
+    // Hide the entire section while data isn't ready, so home renders instantly
+    // without skeleton flashes on cold starts.
+    if (recommendedRecipes.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 16),
         _buildSectionHeader("Recommended For You"),
         const SizedBox(height: 16),
-        if (isLoadingRecommendations)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-            child: Row(
-              children: List.generate(3, (i) {
-                return Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      left: i == 0 ? 0 : 6,
-                      right: i == 2 ? 0 : 6,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        AspectRatio(
-                          aspectRatio: 16 / 11,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: cs.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: cs.outlineVariant),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerLow,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Container(
-                          height: 12,
-                          width: 72,
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerLow,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-            ),
-          )
-        else if (recommendedRecipes.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 30),
-            child: Center(
-              child: Text(
-                "Start viewing recipes to see recommendations!",
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
-            ),
-          )
-        else
-          SizedBox(
+        SizedBox(
             height: 232,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
@@ -874,7 +881,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   recommendedRecipes.length,
                   onRecipeTap: () {
                     ApiService.postRecommendationFeedback(r.id, 'click');
-                    navigateToDetail(r.id);
+                    navigateToDetail(r.id, preview: r);
                   },
                 );
               },
@@ -1098,7 +1105,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     final cs = Theme.of(context).colorScheme;
     return GestureDetector(
-      onTap: onRecipeTap ?? () => navigateToDetail(recipe.id),
+      onTap: onRecipeTap ?? () => navigateToDetail(recipe.id, preview: recipe),
       child: Container(
         width: 180,
         margin: EdgeInsets.only(
@@ -1126,22 +1133,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(20),
                 ),
-                child: recipe.imageUrl != null
+                child: (recipe.imageUrl != null &&
+                        recipe.imageUrl!.trim().isNotEmpty)
                     ? CachedNetworkImage(
                         imageUrl: recipe.imageUrl!,
                         fit: BoxFit.cover,
                         width: double.infinity,
+                        fadeInDuration: const Duration(milliseconds: 220),
+                        fadeOutDuration: const Duration(milliseconds: 120),
+                        memCacheWidth: 480,
                         placeholder: (context, url) =>
-                            Container(color: cs.surfaceContainerLow),
-                        errorWidget: (context, url, error) => Container(
-                          color: cs.surfaceContainerLow,
-                          child: Icon(Icons.restaurant, color: cs.onSurfaceVariant),
-                        ),
+                            _imageLoadingPlaceholder(cs),
+                        errorWidget: (context, url, error) =>
+                            _imageEmptyPlaceholder(cs),
                       )
-                    : Container(
-                        color: cs.surfaceContainerLow,
-                        child: Icon(Icons.restaurant, color: cs.onSurfaceVariant),
-                      ),
+                    : _imageEmptyPlaceholder(cs),
               ),
             ),
             Expanded(

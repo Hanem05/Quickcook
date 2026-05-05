@@ -390,7 +390,7 @@ class RecipeController extends Controller
 
         $cacheKey = 'recommend:v'.$this->recommendationCacheVersion().':u'.$userId.':l'.$limit.':a'.$latestViewActivityId;
 
-        return response()->json(Cache::remember($cacheKey, now()->addMinutes(10), function () use ($limit, $userId, $request) {
+        return response()->json(Cache::remember($cacheKey, now()->addMinutes(10), function () use ($limit, $userId) {
             $favoriteIds = $userId > 0
                 ? DB::table('favorites')->where('user_id', $userId)->pluck('recipe_id')->map(static fn ($id): int => (int) $id)->values()->all()
                 : [];
@@ -430,100 +430,143 @@ class RecipeController extends Controller
 
             $favoriteIngredientIds = $seedIds === []
                 ? []
-                : DB::table('recipe_ingredient')->whereIn('recipe_id', $seedIds)->pluck('ingredient_id')->map(static fn ($id): int => (int) $id)->values()->all();
+                : DB::table('recipe_ingredient')
+                    ->whereIn('recipe_id', $seedIds)
+                    ->pluck('ingredient_id')
+                    ->map(static fn ($id): int => (int) $id)
+                    ->values()
+                    ->all();
 
             $favoriteCategories = $seedIds === []
                 ? []
                 : Recipe::query()->whereIn('id', $seedIds)->whereNotNull('category')->pluck('category')->map(static fn ($v): string => (string) $v)->values()->all();
 
             $hasBoostScores = Schema::hasTable('recipe_boost_scores');
-            $sql = $hasBoostScores ? <<<'SQL'
-SELECT recipes.id AS recipe_id,
-  (
-    COALESCE(rbs.recommend_clicks, 0) * 3
-    + COALESCE(rbs.recommend_saves, 0) * 5
-    + (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = recipes.id) * 2
-    + COALESCE((SELECT AVG(rating) FROM ratings r WHERE r.recipe_id = recipes.id), 0) * 8
-  ) AS rank_score
-FROM recipes
-LEFT JOIN recipe_boost_scores rbs ON rbs.recipe_id = recipes.id
-ORDER BY rank_score DESC, recipes.id DESC
-LIMIT 200
-SQL : <<<'SQL'
-SELECT recipes.id AS recipe_id,
-  (
-    (SELECT COUNT(*) FROM favorites f WHERE f.recipe_id = recipes.id) * 2
-    + COALESCE((SELECT AVG(rating) FROM ratings r WHERE r.recipe_id = recipes.id), 0) * 8
-  ) AS rank_score
-FROM recipes
-ORDER BY rank_score DESC, recipes.id DESC
-LIMIT 200
-SQL;
-            $rows = DB::select($sql);
-            $globalScores = collect($rows)->keyBy(fn ($r) => (int) $r->recipe_id);
+            $favoriteSet = array_fill_keys($favoriteIds, true);
+            $collectionSet = array_fill_keys($collectionIds, true);
+            $recentSet = array_fill_keys($recentViewIds, true);
+            $favoriteCategorySet = array_fill_keys($favoriteCategories, true);
+            $favoriteIngredientSet = array_fill_keys($favoriteIngredientIds, true);
 
-            $candidates = Recipe::query()
-                ->with(['ingredients:id,name'])
-                ->withAvg('ratings as average_rating', 'rating')
-                ->limit(200)
+            $ratingAgg = DB::table('ratings')
+                ->selectRaw('recipe_id, AVG(rating) as avg_rating')
+                ->groupBy('recipe_id');
+
+            $favoriteAgg = DB::table('favorites')
+                ->selectRaw('recipe_id, COUNT(*) as fav_count')
+                ->groupBy('recipe_id');
+
+            $query = Recipe::query()
+                ->select([
+                    'recipes.id',
+                    'recipes.name',
+                    'recipes.category',
+                    'recipes.difficulty',
+                    'recipes.cooking_time',
+                    'recipes.instructions',
+                    'recipes.image',
+                ])
+                ->leftJoinSub($favoriteAgg, 'fav_agg', function ($join) {
+                    $join->on('fav_agg.recipe_id', '=', 'recipes.id');
+                })
+                ->leftJoinSub($ratingAgg, 'rating_agg', function ($join) {
+                    $join->on('rating_agg.recipe_id', '=', 'recipes.id');
+                });
+
+            if ($hasBoostScores) {
+                $query->leftJoin('recipe_boost_scores as rbs', 'rbs.recipe_id', '=', 'recipes.id');
+            }
+
+            $globalScoreSql = $hasBoostScores
+                ? 'COALESCE(rbs.recommend_clicks, 0) * 3 + COALESCE(rbs.recommend_saves, 0) * 5 + COALESCE(fav_agg.fav_count, 0) * 2 + COALESCE(rating_agg.avg_rating, 0) * 8'
+                : 'COALESCE(fav_agg.fav_count, 0) * 2 + COALESCE(rating_agg.avg_rating, 0) * 8';
+
+            $candidates = $query
+                ->addSelect([
+                    DB::raw('COALESCE(rating_agg.avg_rating, 0) as average_rating'),
+                    DB::raw("($globalScoreSql) as global_rank_score"),
+                ])
+                ->orderByDesc('global_rank_score')
+                ->orderByDesc('recipes.id')
+                ->limit(120)
                 ->get();
 
-            $scored = $candidates->map(function (Recipe $recipe) use ($globalScores, $favoriteIngredientIds, $favoriteCategories, $favoriteIds, $collectionIds, $recentViewIds, $interactionFrequency) {
-            $rid = (int) $recipe->id;
-            $globalRow = $globalScores->get($rid);
-            $global = (float) (is_object($globalRow) && isset($globalRow->rank_score) ? $globalRow->rank_score : 0.0);
-            $personal = 0.0;
-
-            if (in_array($rid, $favoriteIds, true)) {
-                $personal += 18;
-            }
-            if (in_array($rid, $collectionIds, true)) {
-                $personal += 14;
-            }
-            if (in_array($rid, $recentViewIds, true)) {
-                $personal += 10;
-            }
-            $personal += min(24, ((int) ($interactionFrequency[$rid] ?? 0)) * 1.8);
-            if ($recipe->category && in_array((string) $recipe->category, $favoriteCategories, true)) {
-                $personal += 8;
+            if ($candidates->isEmpty()) {
+                return [];
             }
 
-            if ($favoriteIngredientIds !== []) {
-                $recipeIngredientIds = $recipe->ingredients->pluck('id')->map(static fn ($id): int => (int) $id)->values()->all();
-                $overlap = count(array_intersect($recipeIngredientIds, $favoriteIngredientIds));
-                $personal += min(20, $overlap * 2.5);
-            }
+            $candidateIds = $candidates->pluck('id')->map(static fn ($id): int => (int) $id)->values()->all();
+            $recipeIngredientIdsMap = DB::table('recipe_ingredient')
+                ->whereIn('recipe_id', $candidateIds)
+                ->select(['recipe_id', 'ingredient_id'])
+                ->get()
+                ->groupBy('recipe_id')
+                ->map(static fn ($rows) => collect($rows)->pluck('ingredient_id')->map(static fn ($id): int => (int) $id)->values()->all())
+                ->all();
 
-            return [
-                'score' => $global + $personal,
-                'recipe' => $recipe,
-            ];
-            })->sortByDesc('score')->take($limit)->values();
+            $ingredientNamesByRecipe = DB::table('recipe_ingredient')
+                ->join('ingredients', 'ingredients.id', '=', 'recipe_ingredient.ingredient_id')
+                ->whereIn('recipe_ingredient.recipe_id', $candidateIds)
+                ->select(['recipe_ingredient.recipe_id', 'ingredients.name'])
+                ->get()
+                ->groupBy('recipe_id')
+                ->map(static fn ($rows) => collect($rows)->pluck('name')->values()->all())
+                ->all();
+
+            $scored = $candidates
+                ->map(function (Recipe $recipe) use ($recipeIngredientIdsMap, $ingredientNamesByRecipe, $favoriteSet, $collectionSet, $recentSet, $interactionFrequency, $favoriteCategorySet, $favoriteIngredientSet) {
+                    $rid = (int) $recipe->id;
+                    $global = (float) ($recipe->global_rank_score ?? 0);
+                    $personal = 0.0;
+
+                    if (isset($favoriteSet[$rid])) {
+                        $personal += 18;
+                    }
+                    if (isset($collectionSet[$rid])) {
+                        $personal += 14;
+                    }
+                    if (isset($recentSet[$rid])) {
+                        $personal += 10;
+                    }
+                    $personal += min(24, ((int) ($interactionFrequency[$rid] ?? 0)) * 1.8);
+
+                    $category = (string) ($recipe->category ?? '');
+                    if ($category !== '' && isset($favoriteCategorySet[$category])) {
+                        $personal += 8;
+                    }
+
+                    if ($favoriteIngredientSet !== []) {
+                        $overlap = 0;
+                        foreach (($recipeIngredientIdsMap[$rid] ?? []) as $ingId) {
+                            if (isset($favoriteIngredientSet[$ingId])) {
+                                $overlap++;
+                            }
+                        }
+                        $personal += min(20, $overlap * 2.5);
+                    }
+
+                    return [
+                        'id' => $rid,
+                        'name' => $recipe->name,
+                        'category' => $recipe->category,
+                        'difficulty' => $recipe->difficulty ?? 'medium',
+                        'cooking_time' => (int) ($recipe->cooking_time ?? 30),
+                        'instructions' => $recipe->instructions,
+                        'image_url' => $recipe->image_url,
+                        'image' => $recipe->image_url,
+                        'ingredients' => $ingredientNamesByRecipe[$rid] ?? [],
+                        'average_rating' => round((float) ($recipe->average_rating ?? 0), 1),
+                        'recommendation_score' => round($global + $personal, 2),
+                    ];
+                })
+                ->sortByDesc('recommendation_score')
+                ->values();
 
             if ($scored->isEmpty()) {
                 return [];
             }
 
-            $out = $scored->map(function (array $row) {
-            /** @var Recipe $recipe */
-            $recipe = $row['recipe'];
-            $avg = $recipe->average_rating;
-
-            return [
-                'id' => $recipe->id,
-                'name' => $recipe->name,
-                'category' => $recipe->category,
-                'difficulty' => $recipe->difficulty ?? 'medium',
-                'cooking_time' => (int) ($recipe->cooking_time ?? 30),
-                'instructions' => $recipe->instructions,
-                'image_url' => $recipe->image_url,
-                'image' => $recipe->image_url,
-                'ingredients' => $recipe->ingredients->pluck('name'),
-                'average_rating' => $avg !== null ? round((float) $avg, 1) : 0,
-                'recommendation_score' => round((float) $row['score'], 2),
-            ];
-            })
-                // Avoid duplicate cards from repeated seed names / payload merging.
+            $out = $scored
                 ->unique(static fn (array $item): string => mb_strtolower(trim((string) ($item['name'] ?? ''))))
                 ->values()
                 ->take($limit)

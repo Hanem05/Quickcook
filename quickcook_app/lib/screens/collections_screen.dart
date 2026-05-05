@@ -2,8 +2,41 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import 'collection_detail_screen.dart';
 
-class CollectionsScreen extends StatelessWidget {
+class CollectionsScreen extends StatefulWidget {
   const CollectionsScreen({super.key});
+
+  @override
+  State<CollectionsScreen> createState() => _CollectionsScreenState();
+}
+
+class _CollectionsScreenState extends State<CollectionsScreen> {
+  List<dynamic> _collections = const [];
+  bool _initialLoading = true;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load({bool force = false}) async {
+    try {
+      final data = await ApiService.getCollections(forceRefresh: force);
+      if (!mounted) return;
+      setState(() {
+        _collections = data;
+        _initialLoading = false;
+        _hasError = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _initialLoading = false;
+        _hasError = _collections.isEmpty;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,30 +63,55 @@ class CollectionsScreen extends StatelessWidget {
           child: Container(height: 1, color: cs.outlineVariant),
         ),
       ),
-      body: FutureBuilder<List<dynamic>>(
-        future: ApiService.getCollections(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator(color: cs.primary));
-          }
-          if (snapshot.hasError) {
+      body: Builder(
+        builder: (context) {
+          // Render the layout immediately on every visit. Only show an empty
+          // state AFTER the first fetch has actually completed — this avoids
+          // flashing "No collections yet" while we're still loading.
+          if (_collections.isEmpty) {
+            if (_initialLoading) {
+              // Friendly placeholder so the page never looks blank during the
+              // first ~50-150ms cold fetch.
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      height: 22,
+                      width: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: cs.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      "Loading your collections…",
+                      style: TextStyle(
+                        color: cs.onSurfaceVariant,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
             return _buildEmptyState(
               context,
-              icon: Icons.error_outline_rounded,
-              title: "Unable to load collections",
-              subtitle: "Please try again in a moment.",
-            );
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return _buildEmptyState(
-              context,
-              icon: Icons.folder_open_rounded,
-              title: "No collections yet",
-              subtitle: "Create and save recipe groups to organize your meals.",
+              icon: _hasError
+                  ? Icons.error_outline_rounded
+                  : Icons.folder_open_rounded,
+              title: _hasError
+                  ? "Unable to load collections"
+                  : "No collections yet",
+              subtitle: _hasError
+                  ? "Please try again in a moment."
+                  : "Create and save recipe groups to organize your meals.",
             );
           }
 
-          final collections = snapshot.data!;
+          final collections = _collections;
           return Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 900),

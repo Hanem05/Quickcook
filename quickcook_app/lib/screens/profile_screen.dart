@@ -20,7 +20,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
-  bool isLoading = true;
+  bool isLoading = false;
+  bool _hasFetched = false;
   bool isSaving = false;
 
   @override
@@ -38,18 +39,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> loadUserProfile() async {
+    // Never blank the page — the layout is mostly static. Just fill in the
+    // fields when data arrives.
     try {
       final userData = await ApiService.getUserProfile();
       if (!mounted) return;
       setState(() {
-        nameController.text = userData['name'] ?? '';
-        emailController.text = userData['email'] ?? '';
+        if (nameController.text != (userData['name'] ?? '')) {
+          nameController.text = userData['name'] ?? '';
+        }
+        if (emailController.text != (userData['email'] ?? '')) {
+          emailController.text = userData['email'] ?? '';
+        }
         isLoading = false;
+        _hasFetched = true;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => isLoading = false);
-      _showSnackBar("Failed to load profile", isError: true);
+      // Only complain if there really is no data to show.
+      if (nameController.text.isEmpty) {
+        _showSnackBar("Failed to load profile", isError: true);
+      }
     }
   }
 
@@ -117,43 +128,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Container(color: cs.outlineVariant, height: 1),
         ),
       ),
-      body: isLoading
-          ? Center(child: CircularProgressIndicator(color: cs.primary))
-          : SafeArea(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 800),
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24.0,
-                      vertical: 24.0,
-                    ),
-                    child: Column(
-                      children: [
-                        _buildProfileHero(),
-                        const SizedBox(height: 16),
-
-                        // --- ACCOUNT INFO CARD ---
-                        _buildInfoCard(),
-
-                        const SizedBox(height: 16),
-
-                        // --- ACTIVITY & SESSION CARD ---
-                        _buildActivityCard(),
-
-                        const SizedBox(height: 24),
-
-                        // --- SAVE BUTTON ---
-                        _buildSaveButton(),
-
-                        const SizedBox(height: 24),
-                      ],
-                    ),
-                  ),
-                ),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 800),
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24.0,
+                vertical: 24.0,
+              ),
+              child: Column(
+                children: [
+                  _buildProfileHero(),
+                  const SizedBox(height: 16),
+                  _buildInfoCard(),
+                  const SizedBox(height: 16),
+                  _buildActivityCard(),
+                  const SizedBox(height: 24),
+                  _buildSaveButton(),
+                  const SizedBox(height: 24),
+                ],
               ),
             ),
+          ),
+        ),
+      ),
     );
   }
 

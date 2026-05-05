@@ -1,7 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+
+/// A scroll behavior that gives every scrollable in the app the same smooth
+/// bouncy feel and accepts trackpad / mouse drag (a common cause of "stiff"
+/// scroll on Flutter web).
+class AppScrollBehavior extends MaterialScrollBehavior {
+  const AppScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.invertedStylus,
+      };
+}
+
+/// Cross-platform fade transition between routes — smoother and more
+/// consistent than the default Material zoom transition, especially on web.
+class _SmoothPageTransitions extends PageTransitionsTheme {
+  const _SmoothPageTransitions()
+      : super(builders: const {
+          TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: FadeUpwardsPageTransitionsBuilder(),
+        });
+}
 
 class AppTheme {
   static const Color _seed = Color(0xFF2E7D6E);
+
+  /// Shared smoothness defaults applied to both light and dark themes.
+  static const PageTransitionsTheme pageTransitions = _SmoothPageTransitions();
 
   /// Explicit dark palette so Flutter Web / Material 3 doesn’t look “washed” or light-on-light.
   static ColorScheme get _darkScheme => const ColorScheme(
@@ -42,6 +80,8 @@ class AppTheme {
         fontFamily: 'Roboto',
         colorScheme: ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.light),
         scaffoldBackgroundColor: const Color(0xFFF4F6F5),
+        pageTransitionsTheme: pageTransitions,
+        splashFactory: InkSparkle.splashFactory,
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFFF4F6F5),
           foregroundColor: Color(0xFF1C1C1E),
@@ -154,6 +194,8 @@ class AppTheme {
       colorScheme: cs,
       scaffoldBackgroundColor: cs.surface,
       canvasColor: cs.surface,
+      pageTransitionsTheme: pageTransitions,
+      splashFactory: InkSparkle.splashFactory,
       appBarTheme: AppBarTheme(
         backgroundColor: cs.surface,
         foregroundColor: cs.onSurface,

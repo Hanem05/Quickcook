@@ -12,7 +12,16 @@ import '../widgets/app_message.dart';
 class RecipeDetailScreen extends StatefulWidget {
   final int recipeId;
 
-  const RecipeDetailScreen({super.key, required this.recipeId});
+  /// When provided, the detail screen renders immediately with the data the
+  /// caller already has (name, image, category, etc.) and refreshes from the
+  /// API in the background to fill in instructions / full ingredient list.
+  final Recipe? initialRecipe;
+
+  const RecipeDetailScreen({
+    super.key,
+    required this.recipeId,
+    this.initialRecipe,
+  });
 
   @override
   State<RecipeDetailScreen> createState() => _RecipeDetailScreenState();
@@ -37,6 +46,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   @override
   void initState() {
     super.initState();
+    // INSTANT RENDER: if the caller passed the recipe we already have on the
+    // previous screen, paint it immediately and just refresh in the
+    // background. Otherwise, try the in-memory ApiService cache before
+    // falling back to a full network load.
+    final preview = widget.initialRecipe ??
+        ApiService.cachedRecipeDetail(widget.recipeId);
+    if (preview != null) {
+      recipe = preview;
+      userRating = preview.userRating;
+      loading = false;
+    }
     loadRecipe();
   }
 
@@ -80,20 +100,21 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   Future<void> loadRecipe() async {
     try {
       final data = await ApiService.fetchRecipeDetail(widget.recipeId);
-
       if (!mounted) return;
       setState(() {
         recipe = data;
         userRating = data.userRating ?? userRating;
         loading = false;
       });
-      // Don't block detail render on analytics sync.
       unawaited(ApiService.logActivity("view_recipe", widget.recipeId));
       await _persistRecentSnapshot(data);
     } catch (e) {
       if (!mounted) return;
-      setState(() => loading = false);
-      _showSnackBar("Failed to load recipe details.", isError: true);
+      // Only complain when we have nothing on screen — silent retry otherwise.
+      if (recipe == null) {
+        setState(() => loading = false);
+        _showSnackBar("Failed to load recipe details.", isError: true);
+      }
     }
   }
 
@@ -318,6 +339,9 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
           ? CachedNetworkImage(
               imageUrl: imageUrl,
               fit: BoxFit.cover,
+              fadeInDuration: const Duration(milliseconds: 220),
+              fadeOutDuration: const Duration(milliseconds: 120),
+              memCacheWidth: 1080,
               placeholder: (context, url) => const Center(
                 child: CircularProgressIndicator(color: primaryBrand),
               ),

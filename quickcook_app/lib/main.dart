@@ -68,6 +68,9 @@ class _QuickCookAppState extends State<QuickCookApp> {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: themeMode,
+      // Smooth bouncy scroll + multi-input drag on every scrollable, including
+      // mouse/trackpad on the web (default web behaviour disables drag).
+      scrollBehavior: const AppScrollBehavior(),
       navigatorObservers: [_routeObserver],
       home: const LoginScreen(),
     );

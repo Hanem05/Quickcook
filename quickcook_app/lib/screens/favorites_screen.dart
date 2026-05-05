@@ -15,7 +15,8 @@ class FavoritesScreen extends StatefulWidget {
 
 class _FavoritesScreenState extends State<FavoritesScreen> {
   List<Recipe> favorites = [];
-  bool isLoading = true;
+  bool isLoading = false;
+  bool _hasFetched = false;
 
   // --- MODERN TEAL & ZINC PALETTE ---
   static const Color primaryBrand = Color(0xFF0D9488);
@@ -33,14 +34,18 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     loadFavorites();
   }
 
-  Future<void> loadFavorites() async {
-    setState(() => isLoading = true);
+  Future<void> loadFavorites({bool force = false}) async {
+    // Show the spinner ONLY when we have nothing on screen yet.
+    if (favorites.isEmpty && !_hasFetched) {
+      setState(() => isLoading = true);
+    }
     try {
-      final data = await ApiService.fetchFavorite();
+      final data = await ApiService.fetchFavorite(forceRefresh: force);
       if (!mounted) return;
       setState(() {
         favorites = data;
         isLoading = false;
+        _hasFetched = true;
       });
     } catch (e) {
       if (mounted) setState(() => isLoading = false);
@@ -112,7 +117,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     )
                   : RefreshIndicator(
                       key: const ValueKey('list'),
-                      onRefresh: loadFavorites,
+                      onRefresh: () => loadFavorites(force: true),
                       color: cs.primary,
                       child: ListView(
                         physics: const AlwaysScrollableScrollPhysics(
@@ -132,7 +137,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                               crossAxisCount: 2,
                               mainAxisSpacing: 14,
                               crossAxisSpacing: 14,
-                              childAspectRatio: 0.72,
+                              // Taller cards so the image + chip + title + buttons
+                              // fit without overflow on small Android screens.
+                              childAspectRatio: 0.62,
                             ),
                             itemBuilder: (context, index) {
                               return _buildFavoriteGridCard(favorites[index]);
@@ -270,7 +277,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => RecipeDetailScreen(recipeId: recipe.id),
+          builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
         ),
       ),
       child: Container(
@@ -302,6 +309,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       height: 200,
                       width: double.infinity,
                       fit: BoxFit.cover,
+                      fadeInDuration: const Duration(milliseconds: 220),
+                      fadeOutDuration: const Duration(milliseconds: 120),
+                      memCacheWidth: 600,
                       placeholder: (context, url) => Container(
                         color: cs.surfaceContainerLow,
                         height: 200,
@@ -389,7 +399,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         onPressed: () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => RecipeDetailScreen(recipeId: recipe.id),
+                            builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
                           ),
                         ),
                         style: OutlinedButton.styleFrom(
@@ -452,7 +462,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => RecipeDetailScreen(recipeId: recipe.id),
+          builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
         ),
       ),
       child: Container(
@@ -474,7 +484,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              flex: 6,
+              flex: 5,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
                 child: recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
@@ -482,6 +492,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         imageUrl: recipe.imageUrl!,
                         fit: BoxFit.cover,
                         width: double.infinity,
+                        fadeInDuration: const Duration(milliseconds: 220),
+                        fadeOutDuration: const Duration(milliseconds: 120),
+                        memCacheWidth: 480,
                         placeholder: (context, url) => Container(
                           color: cs.surfaceContainerLow,
                           child: Center(
@@ -517,16 +530,16 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             Expanded(
               flex: 5,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (recipe.category != null && recipe.category!.trim().isNotEmpty)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                         decoration: BoxDecoration(
                           color: cs.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(7),
                         ),
                         child: Text(
                           recipe.category!,
@@ -534,19 +547,19 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: cs.primary,
-                            fontSize: 10.5,
+                            fontSize: 10,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     Text(
                       recipe.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: cs.onSurface,
-                        fontSize: 16,
+                        fontSize: 14.5,
                         height: 1.2,
                         fontWeight: FontWeight.w900,
                       ),
@@ -559,43 +572,43 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                             onPressed: () => Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => RecipeDetailScreen(recipeId: recipe.id),
+                                builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
                               ),
                             ),
                             style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 9),
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              minimumSize: const Size(0, 32),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                                borderRadius: BorderRadius.circular(9),
                               ),
                             ),
                             child: const Text(
                               "OPEN",
                               style: TextStyle(
                                 fontWeight: FontWeight.w800,
-                                fontSize: 11.5,
+                                fontSize: 11,
                               ),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextButton(
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          height: 32,
+                          width: 32,
+                          child: IconButton(
+                            tooltip: 'Remove',
                             onPressed: () => removeFavorite(recipe.id),
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.redAccent,
+                            padding: EdgeInsets.zero,
+                            iconSize: 18,
+                            color: Colors.redAccent,
+                            style: IconButton.styleFrom(
                               backgroundColor: Colors.redAccent.withOpacity(0.08),
-                              padding: const EdgeInsets.symmetric(vertical: 9),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                                borderRadius: BorderRadius.circular(9),
                               ),
                             ),
-                            child: const Text(
-                              "REMOVE",
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 11.2,
-                              ),
-                            ),
+                            icon: const Icon(Icons.close_rounded),
                           ),
                         ),
                       ],

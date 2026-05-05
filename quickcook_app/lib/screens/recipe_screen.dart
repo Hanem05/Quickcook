@@ -32,11 +32,42 @@ class _RecipeScreenState extends State<RecipeScreen> {
   List<Recipe> allRecipes = [];
   List<Recipe> filteredRecipes = [];
 
+  /// Master "no-filter" superset used for instant client-side filtering. We
+  /// fall back to network only when a filter combination has never been seen.
+  List<Recipe> _baselineRecipes = [];
+
+  /// Cache of recipe lists per filter signature so re-tapping a chip is
+  /// truly instant on subsequent taps.
+  final Map<String, List<Recipe>> _filterCache = {};
+  final Map<String, bool> _filterHasMore = {};
+
   int currentPage = 1;
   bool hasMore = true;
   bool loadingMore = false;
   bool isApplyingFilters = false;
+  bool _initialMatchPending = false;
   int _filterRequestToken = 0;
+
+  String get _filterKey =>
+      '${selectedCategory}|${selectedDifficulty}|${maxCookingTime ?? 0}';
+
+  bool _matchesCurrentFilters(Recipe r) {
+    if (selectedCategory != 'All' &&
+        (r.category ?? '').toLowerCase() != selectedCategory.toLowerCase()) {
+      return false;
+    }
+    if (selectedDifficulty != 'All' &&
+        (r.difficulty ?? '').toLowerCase() !=
+            selectedDifficulty.toLowerCase()) {
+      return false;
+    }
+    if (maxCookingTime != null &&
+        maxCookingTime! > 0 &&
+        (r.cookingTimeMinutes ?? 0) > maxCookingTime!) {
+      return false;
+    }
+    return true;
+  }
 
   /// CATEGORY FILTER
   List<String> categories = [
@@ -67,7 +98,19 @@ class _RecipeScreenState extends State<RecipeScreen> {
     super.initState();
     allRecipes = widget.recipes;
     filteredRecipes = widget.recipes;
+    _baselineRecipes = widget.recipes;
+    // Seed the cache so the default ("All") chip is instant from the start.
+    _filterCache['All|All|0'] = widget.recipes;
     loadFavorites();
+    // If the screen was opened with an empty seed (instant-navigation path
+    // from Home), kick off the actual /match-recipes fetch in the background.
+    // The grid stays mounted; results stream in when the API responds.
+    if (widget.recipes.isEmpty) {
+      _initialMatchPending = true;
+      _silentRefreshCurrentFilter('All|All|0').whenComplete(() {
+        if (mounted) setState(() => _initialMatchPending = false);
+      });
+    }
   }
 
   @override
@@ -129,9 +172,33 @@ class _RecipeScreenState extends State<RecipeScreen> {
     });
   }
 
-  Future<void> _reloadFiltersFromServer() async {
+  /// Applies the currently selected filter combination immediately, using
+  /// (in priority order):
+  ///   1) the cached server result for this exact combo, OR
+  ///   2) a client-side filter of the baseline list
+  ///
+  /// Then fires a silent server refresh so the cache stays accurate. The
+  /// previous code awaited the network on every chip tap, which is what was
+  /// making chip changes feel slow.
+  void _applyFiltersInstant() {
+    final key = _filterKey;
+    final cached = _filterCache[key];
+    final List<Recipe> next = cached ??
+        _baselineRecipes.where(_matchesCurrentFilters).toList();
+
+    setState(() {
+      currentPage = 1;
+      allRecipes = List<Recipe>.from(next);
+      filteredRecipes = allRecipes;
+      hasMore = _filterHasMore[key] ?? (cached == null);
+      isApplyingFilters = false;
+    });
+
+    unawaited(_silentRefreshCurrentFilter(key));
+  }
+
+  Future<void> _silentRefreshCurrentFilter(String key) async {
     final requestToken = ++_filterRequestToken;
-    setState(() => isApplyingFilters = true);
     try {
       final result = await ApiService.matchRecipes(
         widget.ingredientIds,
@@ -141,41 +208,50 @@ class _RecipeScreenState extends State<RecipeScreen> {
         maxCookingTime: maxCookingTime,
       );
       if (!mounted || requestToken != _filterRequestToken) return;
+      final fresh = List<Recipe>.from(result["recipes"] ?? const <Recipe>[]);
+      _filterCache[key] = fresh;
+      _filterHasMore[key] = result["hasMore"] == true;
+      // Keep an unfiltered superset so other chips can also filter instantly.
+      if (key == 'All|All|0') {
+        _baselineRecipes = fresh;
+      }
+      // Only swap the visible list if the user hasn't navigated to a different
+      // filter while we were fetching.
+      if (key != _filterKey) return;
+      // If lists are identical content-wise, skip rebuild to avoid flicker.
+      if (_recipeListsEqual(fresh, allRecipes)) return;
       setState(() {
-        currentPage = 1;
-        allRecipes = List<Recipe>.from(result["recipes"] ?? const <Recipe>[]);
+        allRecipes = fresh;
         filteredRecipes = allRecipes;
-        hasMore = result["hasMore"] == true;
+        hasMore = _filterHasMore[key] == true;
       });
     } catch (_) {
-      // Keep current cards on-screen to avoid perceived "blank loading" on filter taps.
-    } finally {
-      if (mounted && requestToken == _filterRequestToken) {
-        setState(() => isApplyingFilters = false);
-      }
+      // Keep current cards on-screen — silent refresh, never block the UI.
     }
   }
 
+  bool _recipeListsEqual(List<Recipe> a, List<Recipe> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
+  }
+
   /// CATEGORY FILTER
-  Future<void> filterByCategory(String category) async {
-    setState(() {
-      selectedCategory = category;
-    });
-    await _reloadFiltersFromServer();
+  void filterByCategory(String category) {
+    setState(() => selectedCategory = category);
+    _applyFiltersInstant();
   }
 
-  Future<void> filterByDifficulty(String difficulty) async {
-    setState(() {
-      selectedDifficulty = difficulty;
-    });
-    await _reloadFiltersFromServer();
+  void filterByDifficulty(String difficulty) {
+    setState(() => selectedDifficulty = difficulty);
+    _applyFiltersInstant();
   }
 
-  Future<void> filterByMaxCookingTime(int? minutes) async {
-    setState(() {
-      maxCookingTime = minutes;
-    });
-    await _reloadFiltersFromServer();
+  void filterByMaxCookingTime(int? minutes) {
+    setState(() => maxCookingTime = minutes);
+    _applyFiltersInstant();
   }
 
   /// IMAGE (OPTIMIZED + CACHED + STYLED)
@@ -192,6 +268,9 @@ class _RecipeScreenState extends State<RecipeScreen> {
         height: 220,
         width: double.infinity,
         fit: BoxFit.cover,
+        fadeInDuration: const Duration(milliseconds: 220),
+        fadeOutDuration: const Duration(milliseconds: 120),
+        memCacheWidth: 600,
         placeholder: (context, url) => Container(
           height: 220,
           color: cs.surfaceContainerLow,
@@ -297,7 +376,8 @@ class _RecipeScreenState extends State<RecipeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => RecipeDetailScreen(recipeId: recipe.id),
+        builder: (_) =>
+            RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
       ),
     );
     // Don't block navigation on analytics calls.
@@ -764,20 +844,40 @@ class _RecipeScreenState extends State<RecipeScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.search_off_rounded,
-                                size: 48,
-                                color: cs.onSurfaceVariant,
-                              ),
-                              SizedBox(height: 16),
-                              Text(
-                                "No recipes found matching this filter.",
-                                style: TextStyle(
-                                  color: cs.onSurfaceVariant,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
+                              if (_initialMatchPending) ...[
+                                const SizedBox(
+                                  height: 22,
+                                  width: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.4,
+                                    color: primaryBrand,
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  "Searching for recipes…",
+                                  style: TextStyle(
+                                    color: cs.onSurfaceVariant,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ] else ...[
+                                Icon(
+                                  Icons.search_off_rounded,
+                                  size: 48,
+                                  color: cs.onSurfaceVariant,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  "No recipes found matching this filter.",
+                                  style: TextStyle(
+                                    color: cs.onSurfaceVariant,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         )
@@ -786,6 +886,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                             Expanded(
                               child: GridView.builder(
                                 physics: const BouncingScrollPhysics(),
+                                cacheExtent: 600,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 24,
                                   vertical: 16,
@@ -795,8 +896,9 @@ class _RecipeScreenState extends State<RecipeScreen> {
                                   crossAxisCount: 2,
                                   mainAxisSpacing: 12,
                                   crossAxisSpacing: 12,
-                                  // Slightly wider vs height: compact cards; content uses Spacer so Save aligns.
-                                  childAspectRatio: 0.66,
+                                  // Tall enough to fit image (4:3) + chips + title
+                                  // + save button without overflow on small phones.
+                                  childAspectRatio: 0.58,
                                 ),
                                 itemBuilder: (context, index) {
                                   return _buildMatchedRecipeGridCard(filteredRecipes[index]);

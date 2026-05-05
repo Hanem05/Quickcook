@@ -45,7 +45,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   Map<String, dynamic>? activityStats;
   int totalUsers = 0;
   int totalRecipes = 0;
-  bool loading = true;
+  bool loading = false;
+  bool _hasFetched = false;
 
   int _activityPage = 1;
   bool _isLoadingMore = false;
@@ -126,16 +127,22 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }
 
   // --- DATA SYNC ---
-  /// Recipes and users load independently. `/recipes` is public; `/users` is admin-only — if users
-  /// fails, we must still apply recipes or the Recipe Library stays empty after a successful fetch.
+  /// Stale-while-revalidate: dashboard renders cached data IMMEDIATELY and
+  /// only shows the full-screen spinner when there is genuinely nothing on
+  /// screen yet. Recipes/users still load independently so a failure on one
+  /// does not blank the other.
   Future<void> loadData() async {
-    setState(() => loading = true);
-    List<Recipe> recipeData = [];
-    List<dynamic> userData = [];
+    final hasAnythingOnScreen = recipes.isNotEmpty || users.isNotEmpty;
+    if (!hasAnythingOnScreen && !_hasFetched) {
+      setState(() => loading = true);
+    }
+
+    List<Recipe> recipeData = recipes;
+    List<dynamic> userData = users;
     bool recipesOk = false;
     bool usersOk = false;
 
-    final recipesFuture = ApiService.fetchRecipes(forceRefresh: true);
+    final recipesFuture = ApiService.fetchRecipes();
     final usersFuture = ApiService.fetchUsers();
     try {
       recipeData = await recipesFuture;
@@ -157,10 +164,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       totalRecipes = recipeData.length;
       totalUsers = userData.length;
       loading = false;
+      _hasFetched = true;
     });
     _loadAnalyticsInBackground();
 
-    if (!recipesOk && !usersOk && mounted) {
+    // Only complain if we have NOTHING usable on screen.
+    if (!recipesOk && !usersOk && recipes.isEmpty && users.isEmpty && mounted) {
       _showSnackBar("System Sync Failed", isError: true);
     }
   }
@@ -172,7 +181,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     try {
       final results = await Future.wait<dynamic>([
         ApiService.fetchRecipes(forceRefresh: true),
-        ApiService.fetchUsers(),
+        ApiService.fetchUsers(forceRefresh: true),
       ]);
       if (!mounted) return;
       final recipeData = (results[0] as List<Recipe>);

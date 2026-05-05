@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
@@ -27,6 +29,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => isLoading = true);
 
+    // Pre-warm public endpoints in parallel with login so home renders instantly.
+    unawaited(ApiService.fetchIngredients());
+    unawaited(ApiService.fetchRecipes());
+
     final result = await ApiService.login(
       emailController.text,
       passwordController.text,
@@ -40,6 +46,17 @@ class _LoginScreenState extends State<LoginScreen> {
       final data = result["data"];
       final role =
           data["role"] ?? (data["user"] != null ? data["user"]["role"] : null);
+
+      // Pre-warm authenticated endpoints in background; data will be cached
+      // by the time HomeScreen reads it.
+      if (role != "admin") {
+        unawaited(ApiService.fetchRecommendedRecipes());
+        unawaited(ApiService.fetchFavoriteIds());
+        unawaited(ApiService.fetchFavorite());
+        unawaited(ApiService.getCollections());
+      }
+      // Profile screen reads from this cache when opened.
+      unawaited(ApiService.getUserProfile());
 
       if (role == "admin") {
         Navigator.pushReplacement(
