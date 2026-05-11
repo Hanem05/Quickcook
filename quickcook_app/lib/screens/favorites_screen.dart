@@ -19,7 +19,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   bool _hasFetched = false;
 
   // --- MODERN TEAL & ZINC PALETTE ---
-  static const Color primaryBrand = Color(0xFF0D9488);
+  static const Color primaryBrand = Color(0xFFC2410C);
   static const Color darkSlate = Color(0xFF18181B);
   static const Color bgSoft = Color(0xFFF4F4F5);
   static const Color surfaceWhite = Color(0xFFFFFFFF);
@@ -458,6 +458,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
   Widget _buildFavoriteGridCard(Recipe recipe) {
     final cs = Theme.of(context).colorScheme;
+    final thumbnailUrl = recipe.thumbnailUrl;
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
@@ -487,14 +488,14 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               flex: 5,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
-                child: recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
+                child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
                     ? CachedNetworkImage(
-                        imageUrl: recipe.imageUrl!,
+                        imageUrl: thumbnailUrl,
                         fit: BoxFit.cover,
                         width: double.infinity,
-                        fadeInDuration: const Duration(milliseconds: 220),
-                        fadeOutDuration: const Duration(milliseconds: 120),
-                        memCacheWidth: 480,
+                        fadeInDuration: const Duration(milliseconds: 160),
+                        fadeOutDuration: const Duration(milliseconds: 80),
+                        memCacheWidth: 320,
                         placeholder: (context, url) => Container(
                           color: cs.surfaceContainerLow,
                           child: Center(

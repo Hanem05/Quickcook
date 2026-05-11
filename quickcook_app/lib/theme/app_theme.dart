@@ -36,7 +36,8 @@ class _SmoothPageTransitions extends PageTransitionsTheme {
 }
 
 class AppTheme {
-  static const Color _seed = Color(0xFF2E7D6E);
+  // Warm premium accent: copper/amber.
+  static const Color _seed = Color(0xFFC2410C);
 
   /// Shared smoothness defaults applied to both light and dark themes.
   static const PageTransitionsTheme pageTransitions = _SmoothPageTransitions();
@@ -153,7 +154,7 @@ class AppTheme {
         ),
         chipTheme: ChipThemeData(
           backgroundColor: const Color(0xFFF0F3F2),
-          selectedColor: _seed.withOpacity(0.15),
+          selectedColor: _seed.withValues(alpha: 0.15),
           side: const BorderSide(color: Color(0xFFDDE2E0)),
           labelStyle: const TextStyle(
             color: Color(0xFF1F2937),
@@ -251,7 +252,7 @@ class AppTheme {
           }),
           foregroundColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.disabled)) {
-              return cs.onSurface.withOpacity(0.38);
+              return cs.onSurface.withValues(alpha: 0.38);
             }
             return Colors.white;
           }),
@@ -279,7 +280,7 @@ class AppTheme {
       ),
       chipTheme: ChipThemeData(
         backgroundColor: cs.surfaceContainerHigh,
-        selectedColor: cs.primary.withOpacity(0.28),
+        selectedColor: cs.primary.withValues(alpha: 0.28),
         side: BorderSide(color: cs.outlineVariant),
         labelStyle: TextStyle(
           color: cs.onSurface,

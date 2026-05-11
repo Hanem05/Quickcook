@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // <--- ADDED for inputFormatters
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
-import 'home_screen.dart';
+import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -35,8 +35,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => isLoading = false);
 
     if (error == null) {
+      // Registration stores a token; clear it so the user signs in explicitly on Login.
+      await ApiService.logout();
+      if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(
+          builder: (_) => const LoginScreen(
+            postRegistrationMessage:
+                'Account created. Please sign in with your email and password.',
+          ),
+        ),
         (route) => false,
       );
     } else {

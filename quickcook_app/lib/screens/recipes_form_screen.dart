@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../models/ingredient.dart';
 import '../models/recipe.dart';
 import '../services/api_service.dart';
 
@@ -26,6 +27,8 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
   String? _existingImageUrl;
 
   List<String>? ingredientEntries;
+  List<Ingredient> _dbIngredients = [];
+  List<String> _ingredientSuggestions = [];
 
   String selectedCategory = 'Breakfast';
   String selectedDifficulty = 'medium';
@@ -34,7 +37,7 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
   String? instructionsError;
   String? cookingTimeError;
 
-  static const Color primaryBrand = Color(0xFF0D9488);
+  static const Color primaryBrand = Color(0xFFC2410C);
   static const Color darkSlate = Color(0xFF18181B);
   static const Color bgSoft = Color(0xFFF4F4F5);
   static const Color surfaceWhite = Color(0xFFFFFFFF);
@@ -75,6 +78,7 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
     } else {
       ingredientEntries = <String>[];
     }
+    _loadDbIngredients();
   }
 
   @override
@@ -86,7 +90,31 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
     super.dispose();
   }
 
-  void _addIngredientEntry([String? value]) {
+  Future<void> _loadDbIngredients() async {
+    try {
+      final data = await ApiService.fetchIngredients();
+      if (!mounted) return;
+      setState(() => _dbIngredients = data);
+    } catch (_) {}
+  }
+
+  void _updateIngredientSuggestions(String raw) {
+    final q = raw.trim().toLowerCase();
+    if (q.isEmpty) {
+      setState(() => _ingredientSuggestions = []);
+      return;
+    }
+    final matches = _dbIngredients
+        .map((e) => e.name.trim())
+        .where((name) => name.isNotEmpty)
+        .where((name) => name.toLowerCase().contains(q))
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    setState(() => _ingredientSuggestions = matches.take(8).toList());
+  }
+
+  Future<void> _addIngredientEntry([String? value]) async {
     ingredientEntries ??= <String>[];
     final raw = (value ?? ingredientInputController.text).trim();
     if (raw.isEmpty) return;
@@ -99,17 +127,51 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
     if (parts.isEmpty) return;
 
     final existingLower = ingredientEntries!.map((e) => e.toLowerCase()).toSet();
+    final dbLower = _dbIngredients.map((e) => e.name.trim().toLowerCase()).toSet();
     bool addedAny = false;
+    bool createdAny = false;
+    bool skippedLocalDuplicate = false;
     for (final part in parts) {
       final key = part.toLowerCase();
-      if (!existingLower.contains(key)) {
-        ingredientEntries!.add(part);
-        existingLower.add(key);
-        addedAny = true;
+      if (existingLower.contains(key)) {
+        skippedLocalDuplicate = true;
+        continue;
       }
+      if (!dbLower.contains(key)) {
+        try {
+          await ApiService.createIngredient(part);
+          createdAny = true;
+          dbLower.add(key);
+          _dbIngredients = [
+            ..._dbIngredients,
+            Ingredient(id: -DateTime.now().microsecondsSinceEpoch, name: part),
+          ];
+        } catch (_) {
+          await _loadDbIngredients();
+          final refreshedSet =
+              _dbIngredients.map((e) => e.name.trim().toLowerCase()).toSet();
+          if (!refreshedSet.contains(key)) {
+            if (!mounted) return;
+            _showSnackBar("Failed to add ingredient '$part'.", isError: true);
+            continue;
+          }
+        }
+      }
+      ingredientEntries!.add(part);
+      existingLower.add(key);
+      addedAny = true;
     }
 
     ingredientInputController.clear();
+    if (!mounted) return;
+    setState(() {
+      _ingredientSuggestions = [];
+    });
+    if (createdAny) {
+      _showSnackBar("New ingredient(s) added to database.");
+    } else if (skippedLocalDuplicate && !addedAny) {
+      _showSnackBar("Ingredient already added in this recipe.");
+    }
     if (addedAny) {
       setState(() {});
     }
@@ -478,7 +540,10 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                             Expanded(
                               child: TextField(
                                 controller: ingredientInputController,
-                                onSubmitted: (_) => _addIngredientEntry(),
+                                onChanged: _updateIngredientSuggestions,
+                                onSubmitted: (_) {
+                                  _addIngredientEntry();
+                                },
                                 decoration: _inputDecoration(
                                   Icons.kitchen_rounded,
                                   "Enter ingredient (e.g. Garlic)",
@@ -489,7 +554,9 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                             SizedBox(
                               height: 50,
                               child: ElevatedButton.icon(
-                                onPressed: _addIngredientEntry,
+                                onPressed: () {
+                                  _addIngredientEntry();
+                                },
                                 icon: const Icon(Icons.add_rounded, size: 17),
                                 label: const Text("Add"),
                                 style: ElevatedButton.styleFrom(
@@ -505,6 +572,48 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                           ],
                         ),
                       ),
+                      if (_ingredientSuggestions.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: surfaceWhite,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: borderLight),
+                          ),
+                          child: Column(
+                            children: _ingredientSuggestions
+                                .map(
+                                  (name) => ListTile(
+                                    dense: true,
+                                    leading: const Icon(
+                                      Icons.check_circle_outline_rounded,
+                                      size: 18,
+                                      color: primaryBrand,
+                                    ),
+                                    title: Text(
+                                      name,
+                                      style: const TextStyle(
+                                        color: textMain,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                    subtitle: const Text(
+                                      "Existing ingredient in database",
+                                      style: TextStyle(
+                                        color: textMuted,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    onTap: () => _addIngredientEntry(name),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       if ((ingredientEntries ?? const <String>[]).isEmpty)
                         Container(

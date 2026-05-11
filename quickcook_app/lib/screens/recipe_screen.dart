@@ -49,7 +49,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
   int _filterRequestToken = 0;
 
   String get _filterKey =>
-      '${selectedCategory}|${selectedDifficulty}|${maxCookingTime ?? 0}';
+      '$selectedCategory|$selectedDifficulty|${maxCookingTime ?? 0}';
 
   bool _matchesCurrentFilters(Recipe r) {
     if (selectedCategory != 'All' &&
@@ -82,15 +82,10 @@ class _RecipeScreenState extends State<RecipeScreen> {
   String selectedCategory = "All";
   String selectedDifficulty = "All";
   int? maxCookingTime;
+  String selectedSort = "Recommended";
 
   // --- MODERN TEAL & ZINC PALETTE ---
-  static const Color primaryBrand = Color(0xFF0D9488);
-  static const Color darkSlate = Color(0xFF18181B);
-  static const Color bgSoft = Color(0xFFF4F4F5);
-  static const Color surfaceWhite = Color(0xFFFFFFFF);
-  static const Color borderLight = Color(0xFFE4E4E7);
-  static const Color textMain = Color(0xFF27272A);
-  static const Color textMuted = Color(0xFF71717A);
+  static const Color primaryBrand = Color(0xFFC2410C);
   static const Color warningAmber = Color(0xFFF59E0B);
 
   @override
@@ -142,8 +137,26 @@ class _RecipeScreenState extends State<RecipeScreen> {
     }).toList();
 
     setState(() {
-      filteredRecipes = results;
+      filteredRecipes = _sortRecipes(results);
     });
+  }
+
+  List<Recipe> _sortRecipes(List<Recipe> input) {
+    final list = List<Recipe>.from(input);
+    switch (selectedSort) {
+      case 'Fastest':
+        list.sort((a, b) => (a.cookingTimeMinutes ?? 999).compareTo(b.cookingTimeMinutes ?? 999));
+        break;
+      case 'Top Rated':
+        list.sort((a, b) => (b.rating ?? 0).compareTo(a.rating ?? 0));
+        break;
+      case 'A-Z':
+        list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      default:
+        break;
+    }
+    return list;
   }
 
   /// LOAD MORE RECIPES
@@ -189,7 +202,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
     setState(() {
       currentPage = 1;
       allRecipes = List<Recipe>.from(next);
-      filteredRecipes = allRecipes;
+      filteredRecipes = _sortRecipes(allRecipes);
       hasMore = _filterHasMore[key] ?? (cached == null);
       isApplyingFilters = false;
     });
@@ -222,7 +235,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
       if (_recipeListsEqual(fresh, allRecipes)) return;
       setState(() {
         allRecipes = fresh;
-        filteredRecipes = allRecipes;
+        filteredRecipes = _sortRecipes(allRecipes);
         hasMore = _filterHasMore[key] == true;
       });
     } catch (_) {
@@ -252,6 +265,13 @@ class _RecipeScreenState extends State<RecipeScreen> {
   void filterByMaxCookingTime(int? minutes) {
     setState(() => maxCookingTime = minutes);
     _applyFiltersInstant();
+  }
+
+  void updateSort(String sort) {
+    setState(() {
+      selectedSort = sort;
+      filteredRecipes = _sortRecipes(filteredRecipes);
+    });
   }
 
   /// IMAGE (OPTIMIZED + CACHED + STYLED)
@@ -395,7 +415,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
       await ApiService.addToFavorites(recipe.id);
       unawaited(ApiService.postRecommendationFeedback(recipe.id, 'save'));
       unawaited(ApiService.logActivity("favorite_recipe", recipe.id));
-      if (!context.mounted) return;
+      if (!mounted) return;
       AppMessage.show(
         context,
         text: "Saved to favorites",
@@ -424,6 +444,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
     final cs = Theme.of(context).colorScheme;
     final isSaved = savedRecipes.contains(recipe.id);
     final isSaving = savingFavoriteIds.contains(recipe.id);
+    final thumbnailUrl = recipe.thumbnailUrl;
 
     return GestureDetector(
       onTap: () => _openRecipeDetail(recipe),
@@ -434,7 +455,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
           border: Border.all(color: cs.outlineVariant),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(
+              color: Colors.black.withValues(alpha:
                 Theme.of(context).brightness == Brightness.dark ? 0.22 : 0.05,
               ),
               blurRadius: 10,
@@ -450,11 +471,14 @@ class _RecipeScreenState extends State<RecipeScreen> {
               aspectRatio: 4 / 3,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                child: recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
+                child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
                     ? CachedNetworkImage(
-                        imageUrl: recipe.imageUrl!,
+                        imageUrl: thumbnailUrl,
                         fit: BoxFit.cover,
                         width: double.infinity,
+                        fadeInDuration: const Duration(milliseconds: 160),
+                        fadeOutDuration: const Duration(milliseconds: 80),
+                        memCacheWidth: 320,
                         placeholder: (context, url) => Container(
                           color: cs.surfaceContainerLow,
                           child: Center(
@@ -497,7 +521,7 @@ class _RecipeScreenState extends State<RecipeScreen> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: cs.primary.withOpacity(0.12),
+                          color: cs.primary.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
@@ -820,6 +844,35 @@ class _RecipeScreenState extends State<RecipeScreen> {
                           ),
                         ),
                       ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _compactFilterDropdown(
+                          cs: cs,
+                          label: 'Sort',
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              isDense: true,
+                              value: selectedSort,
+                              borderRadius: BorderRadius.circular(12),
+                              style: TextStyle(
+                                color: cs.onSurface,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'Recommended', child: Text('Recommended')),
+                                DropdownMenuItem(value: 'Top Rated', child: Text('Top Rated')),
+                                DropdownMenuItem(value: 'Fastest', child: Text('Fastest')),
+                                DropdownMenuItem(value: 'A-Z', child: Text('A-Z')),
+                              ],
+                              onChanged: (v) {
+                                if (v != null) updateSort(v);
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -884,7 +937,10 @@ class _RecipeScreenState extends State<RecipeScreen> {
                       : Column(
                           children: [
                             Expanded(
-                              child: GridView.builder(
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final gridCount = constraints.maxWidth >= 760 ? 3 : 2;
+                                  return GridView.builder(
                                 physics: const BouncingScrollPhysics(),
                                 cacheExtent: 600,
                                 padding: const EdgeInsets.symmetric(
@@ -892,16 +948,16 @@ class _RecipeScreenState extends State<RecipeScreen> {
                                   vertical: 16,
                                 ),
                                 itemCount: filteredRecipes.length,
-                                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: gridCount,
                                   mainAxisSpacing: 12,
                                   crossAxisSpacing: 12,
-                                  // Tall enough to fit image (4:3) + chips + title
-                                  // + save button without overflow on small phones.
-                                  childAspectRatio: 0.58,
+                                  childAspectRatio: gridCount == 3 ? 0.72 : 0.58,
                                 ),
                                 itemBuilder: (context, index) {
                                   return _buildMatchedRecipeGridCard(filteredRecipes[index]);
+                                },
+                              );
                                 },
                               ),
                             ),

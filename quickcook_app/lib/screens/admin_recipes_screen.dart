@@ -22,6 +22,7 @@ class AdminRecipesScreen extends StatefulWidget {
 }
 
 class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   // --- CORE DATA ---
   List<Recipe> recipes = [];
   List<dynamic> users = [];
@@ -75,14 +76,16 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   int _recipesPage = 0;
 
   // --- NAVIGATION & SEARCH STATE ---
-  int _selectedIndex = 0;
+  // Start admins directly in the full recipe library for faster moderation.
+  int _selectedIndex = 2;
   // 🌿 ADDED: Search Controllers
   final TextEditingController userSearchController = TextEditingController();
   final TextEditingController recipeSearchController = TextEditingController();
+  int _userSearchMode = 0; // 0=all, 1=first name, 2=surname
 
   // --- PREMIUM BRAND COLORS ---
-  static const Color primaryBrand = Color(0xFF0D9488);
-  static const Color primaryBrandLight = Color(0xFF2DD4BF);
+  static const Color primaryBrand = Color(0xFFC2410C);
+  static const Color primaryBrandLight = Color(0xFFFBBF24);
   static const Color darkSlate = Color(0xFF18181B);
   static const Color bgSoft = Color(0xFFF4F4F5);
   static const Color surfaceWhite = Color(0xFFFFFFFF);
@@ -102,8 +105,17 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   Color get _mutedText => _isDark ? const Color(0xFFB0B0BA) : textMuted;
   Color get _sidebarBg => _isDark ? const Color(0xFF0B0B0E) : darkSlate;
   Color get _sidebarText => _isDark ? const Color(0xFFE4E4E7) : Colors.white;
+  Color get _sidebarSurface =>
+      _isDark ? const Color(0xFF151923) : const Color(0xFF252836);
+  Color get _sidebarBorder =>
+      _isDark ? Colors.white.withValues(alpha: 0.07) : Colors.white.withValues(alpha: 0.12);
+  Color get _sidebarMuted =>
+      _isDark ? Colors.white.withValues(alpha: 0.56) : Colors.white.withValues(alpha: 0.66);
   Color get _panelShadowColor =>
       _isDark ? Colors.black.withOpacity(0.35) : Colors.black.withOpacity(0.03);
+  Color get _brandSoft => primaryBrand.withValues(alpha: _isDark ? 0.20 : 0.10);
+  Color get _brandStroke =>
+      primaryBrand.withValues(alpha: _isDark ? 0.36 : 0.26);
 
   @override
   void initState() {
@@ -698,17 +710,28 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   // --- MAIN UI STRUCTURE ---
   @override
   Widget build(BuildContext context) {
+    final isCompactLayout = MediaQuery.of(context).size.width < 1180;
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: _pageBg,
-      body: Row(
-        children: [
-          _buildSidebar(),
-          Expanded(
-            child: Column(
+      drawer: isCompactLayout
+          ? Drawer(
+              width: 300,
+              backgroundColor: Colors.transparent,
+              child: SafeArea(
+                child: _buildSidebar(),
+              ),
+            )
+          : null,
+      body: isCompactLayout
+          ? Column(
               children: [
-                _buildHeader(),
+                _buildHeader(
+                  isCompactLayout: true,
+                  onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
+                ),
                 Expanded(
-                  child: loading
+                  child: loading && !_hasFetched
                       ? const Center(
                           child: CircularProgressIndicator(
                             color: primaryBrand,
@@ -718,10 +741,29 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       : _buildSelectedScreen(),
                 ),
               ],
+            )
+          : Row(
+              children: [
+                _buildSidebar(),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _buildHeader(),
+                      Expanded(
+                        child: loading && !_hasFetched
+                            ? const Center(
+                                child: CircularProgressIndicator(
+                                  color: primaryBrand,
+                                  strokeWidth: 4,
+                                ),
+                              )
+                            : _buildSelectedScreen(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -733,19 +775,83 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         return _buildFullUsersView();
       case 2:
         return _buildFullRecipesView();
+      case 3:
+        return _buildOperationsMonitorView();
       default:
         return _buildDashboard();
     }
+  }
+
+  String _readUserFirstName(Map<String, dynamic> user) {
+    final direct = (user['first_name'] ?? user['firstname'] ?? '')
+        .toString()
+        .trim();
+    if (direct.isNotEmpty) return direct.toLowerCase();
+
+    final full = (user['name'] ?? '').toString().trim();
+    if (full.isEmpty) return '';
+    return full.split(RegExp(r'\s+')).first.toLowerCase();
+  }
+
+  String _readUserLastName(Map<String, dynamic> user) {
+    final direct = (user['last_name'] ?? user['lastname'] ?? '')
+        .toString()
+        .trim();
+    if (direct.isNotEmpty) return direct.toLowerCase();
+
+    final full = (user['name'] ?? '').toString().trim();
+    if (full.isEmpty) return '';
+    final parts = full.split(RegExp(r'\s+'));
+    return parts.length > 1 ? parts.last.toLowerCase() : '';
+  }
+
+  bool _matchesUserSearch(Map<String, dynamic> user, String rawQuery) {
+    final query = rawQuery.trim().toLowerCase();
+    if (query.isEmpty) return true;
+
+    final name = (user['name'] ?? '').toString().toLowerCase();
+    final email = (user['email'] ?? '').toString().toLowerCase();
+    final firstName = _readUserFirstName(user);
+    final lastName = _readUserLastName(user);
+
+    String normalizeValue(String value) =>
+        value.replaceFirst(RegExp(r'^(first|firstname|last|lastname|surname)\s*:?\s*'), '').trim();
+
+    if (query.startsWith('first:') || query.startsWith('firstname:')) {
+      final value = normalizeValue(query);
+      return value.isNotEmpty && firstName.contains(value);
+    }
+    if (query.startsWith('last:') ||
+        query.startsWith('lastname:') ||
+        query.startsWith('surname:')) {
+      final value = normalizeValue(query);
+      return value.isNotEmpty && lastName.contains(value);
+    }
+    if (query.startsWith('first ') || query.startsWith('firstname ')) {
+      final value = normalizeValue(query);
+      return value.isNotEmpty && firstName.contains(value);
+    }
+    if (query.startsWith('last ') ||
+        query.startsWith('lastname ') ||
+        query.startsWith('surname ')) {
+      final value = normalizeValue(query);
+      return value.isNotEmpty && lastName.contains(value);
+    }
+
+    if (_userSearchMode == 1) return firstName.contains(query);
+    if (_userSearchMode == 2) return lastName.contains(query);
+
+    return name.contains(query) || email.contains(query);
   }
 
   // --- FULL DIRECTORY VIEWS ---
   Widget _buildFullUsersView() {
     // Filter first, then paginate to avoid rendering huge tables on each tab switch.
     final filteredUsers = users.where((u) {
-      final query = userSearchController.text.toLowerCase();
-      final name = (u['name'] ?? '').toString().toLowerCase();
-      final email = (u['email'] ?? '').toString().toLowerCase();
-      return name.contains(query) || email.contains(query);
+      return _matchesUserSearch(
+        u,
+        userSearchController.text,
+      );
     }).toList();
     final userTotalPages =
         ((filteredUsers.length + _usersRowsPerPage - 1) ~/ _usersRowsPerPage)
@@ -758,9 +864,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         ? filteredUsers.length
         : userStart + _usersRowsPerPage;
     final visibleUsers = filteredUsers.sublist(userStart, userEnd);
+    final screenW = MediaQuery.sizeOf(context).width;
+    final userNameMaxWidth = screenW < 900 ? 160.0 : 220.0;
+
+    final panelOuterPad = screenW < 900 ? 16.0 : 40.0;
+    final headerInnerPad = screenW < 900 ? 20.0 : 32.0;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(40),
+      padding: EdgeInsets.all(panelOuterPad),
       physics: const BouncingScrollPhysics(),
       child: Container(
         width: double.infinity,
@@ -780,50 +891,84 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.all(32),
-              child: Row(
-                children: [
-                  Container(
+              padding: EdgeInsets.all(headerInnerPad),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrowHeader = constraints.maxWidth < 720;
+                  final titleStyle = TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: _mainText,
+                  );
+                  final accentBar = Container(
                     width: 4,
                     height: 24,
                     decoration: BoxDecoration(
                       color: primaryBrand,
                       borderRadius: BorderRadius.circular(4),
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(
-                    "User Management",
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      color: _mainText,
-                    ),
-                  ),
-                  const SizedBox(width: 32),
-                  // 🌿 ADDED: Search Field
-                  Expanded(
-                    child: TextField(
-                      controller: userSearchController,
-                      onChanged: (_) => setState(() => _usersPage = 0),
-                      decoration: InputDecoration(
-                        hintText: "Search name or email...",
-                        prefixIcon: const Icon(Icons.search, size: 20),
-                        filled: true,
-                        fillColor: _pageBg,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 0,
-                          horizontal: 16,
+                  );
+                  final searchBlock = Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: userSearchController,
+                        onChanged: (_) => setState(() => _usersPage = 0),
+                        decoration: InputDecoration(
+                          hintText: "Search users...",
+                          prefixIcon: const Icon(Icons.search, size: 20),
+                          filled: true,
+                          fillColor: _pageBg,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 0,
+                            horizontal: 16,
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 32),
-                  OutlinedButton.icon(
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ChoiceChip(
+                            label: const Text("All"),
+                            selected: _userSearchMode == 0,
+                            onSelected: (_) {
+                              setState(() {
+                                _userSearchMode = 0;
+                                _usersPage = 0;
+                              });
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text("First Name"),
+                            selected: _userSearchMode == 1,
+                            onSelected: (_) {
+                              setState(() {
+                                _userSearchMode = 1;
+                                _usersPage = 0;
+                              });
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text("Surname"),
+                            selected: _userSearchMode == 2,
+                            onSelected: (_) {
+                              setState(() {
+                                _userSearchMode = 2;
+                                _usersPage = 0;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                  final exportBtn = OutlinedButton.icon(
                     onPressed: _downloadUsersList,
                     icon: const Icon(Icons.download_rounded, size: 18),
                     label: const Text("Export CSV"),
@@ -838,8 +983,59 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                  ),
-                ],
+                  );
+
+                  if (narrowHeader) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            accentBar,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                "User Management",
+                                style: titleStyle,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        searchBlock,
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: exportBtn,
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      accentBar,
+                      const SizedBox(width: 16),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: Text(
+                          "User Management",
+                          style: titleStyle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(child: searchBlock),
+                      const SizedBox(width: 16),
+                      exportBtn,
+                    ],
+                  );
+                },
               ),
             ),
             Divider(height: 1, color: _panelBorder),
@@ -886,42 +1082,55 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         ),
                       ),
                       DataCell(
-                        Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 16,
-                              backgroundColor: primaryBrand.withOpacity(0.1),
-                              child: Text(
-                                (u['name']?.toString().isNotEmpty == true)
-                                    ? u['name']
-                                          .toString()
-                                          .substring(0, 1)
-                                          .toUpperCase()
-                                    : '?',
-                                style: const TextStyle(
-                                  color: primaryBrand,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 12,
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: userNameMaxWidth + 52),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 16,
+                                backgroundColor:
+                                    primaryBrand.withValues(alpha: 0.1),
+                                child: Text(
+                                  (u['name']?.toString().isNotEmpty == true)
+                                      ? u['name']
+                                            .toString()
+                                            .substring(0, 1)
+                                            .toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(
+                                    color: primaryBrand,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              u['name'] ?? 'Unknown',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: _mainText,
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  u['name'] ?? 'Unknown',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: _mainText,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                       DataCell(
-                        Text(
-                          u['email'] ?? 'No email',
-                          style: TextStyle(
-                            color: _mutedText,
-                            fontWeight: FontWeight.w500,
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          child: Text(
+                            u['email'] ?? 'No email',
+                            style: TextStyle(
+                              color: _mutedText,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ),
@@ -995,6 +1204,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     ? "No users"
                     : "Showing ${userStart + 1}-$userEnd of ${filteredUsers.length}",
                 pageLabel: "${safeUsersPage + 1}/$userTotalPages",
+                currentPage: safeUsersPage + 1,
+                totalPages: userTotalPages,
+                onJumpToPage: (page) => setState(() => _usersPage = page - 1),
                 canGoPrev: safeUsersPage > 0,
                 canGoNext: safeUsersPage < userTotalPages - 1,
                 onPrev: () => setState(() => _usersPage = safeUsersPage - 1),
@@ -1010,6 +1222,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   Widget _buildStandardPaginationBar({
     required String summary,
     required String pageLabel,
+    int? currentPage,
+    int? totalPages,
+    ValueChanged<int>? onJumpToPage,
     bool canGoPrev = false,
     bool canGoNext = false,
     VoidCallback? onPrev,
@@ -1065,6 +1280,26 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             ),
             const SizedBox(width: 10),
           ],
+          if (onJumpToPage != null &&
+              currentPage != null &&
+              ((totalPages == null) || totalPages > 1)) ...[
+            OutlinedButton.icon(
+              onPressed: () =>
+                  _showPageJumpDialog(currentPage, totalPages, onJumpToPage),
+              icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+              label: const Text("Jump"),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _mainText,
+                side: BorderSide(color: _panelBorder),
+                backgroundColor: _panelBg,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
           _pagerIcon(
             icon: Icons.chevron_left_rounded,
             enabled: canGoPrev,
@@ -1097,6 +1332,156 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     );
   }
 
+  Widget _buildModalLoadMoreButton({
+    required bool isLoading,
+    required VoidCallback onPressed,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: isLoading ? null : onPressed,
+      icon: isLoading
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.expand_more_rounded, size: 18),
+      label: Text(
+        isLoading ? "Loading..." : "Load More",
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+      ),
+      style: ElevatedButton.styleFrom(
+        elevation: 0,
+        backgroundColor: primaryBrand,
+        foregroundColor: Colors.white,
+        disabledBackgroundColor: primaryBrand.withValues(alpha: 0.55),
+        disabledForegroundColor: Colors.white,
+        minimumSize: const Size(140, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+
+  Widget _buildModalEndText(String text) {
+    return Text(
+      text,
+      style: TextStyle(
+        color: _mutedText,
+        fontWeight: FontWeight.w700,
+        fontSize: 13,
+      ),
+    );
+  }
+
+  Widget _buildDialogSecondaryButton({
+    required VoidCallback onPressed,
+    String label = "Close",
+  }) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: _mainText,
+        side: BorderSide(color: _panelBorder),
+        backgroundColor: _panelBg,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+    );
+  }
+
+  Widget _buildDialogPrimaryButton({
+    required VoidCallback onPressed,
+    required String label,
+    IconData? icon,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon ?? Icons.auto_awesome_rounded, size: 16),
+      label: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+      style: ElevatedButton.styleFrom(
+        elevation: 0,
+        backgroundColor: primaryBrand,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Future<void> _showPageJumpDialog(
+    int currentPage,
+    int? totalPages,
+    ValueChanged<int> onJumpToPage,
+  ) async {
+    final controller = TextEditingController(text: currentPage.toString());
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (ctx) {
+        final hint = totalPages == null
+            ? "Enter a page number (1+)"
+            : "Enter a page number (1-$totalPages)";
+        return AlertDialog(
+          backgroundColor: _panelBg,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(
+            "Jump to page",
+            style: TextStyle(color: _mainText, fontWeight: FontWeight.w900),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                hint,
+                style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  hintText: "Page",
+                  filled: true,
+                  fillColor: _pageBg,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: _panelBorder),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text("Cancel", style: TextStyle(color: _mutedText)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final parsed = int.tryParse(controller.text.trim());
+                if (parsed == null || parsed < 1) {
+                  return;
+                }
+                if (totalPages != null && parsed > totalPages) {
+                  return;
+                }
+                Navigator.pop(ctx, parsed);
+              },
+              child: const Text("Go"),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (selected == null) return;
+    onJumpToPage(selected);
+  }
+
   Widget _pagerIcon({
     required IconData icon,
     required bool enabled,
@@ -1127,7 +1512,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       final query = recipeSearchController.text.toLowerCase();
       return r.name.toLowerCase().contains(query) ||
           (r.category?.toLowerCase() ?? "").contains(query);
-    }).toList();
+    }).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final recipeTotalPages =
         ((filteredRecipes.length + _recipesRowsPerPage - 1) ~/
                 _recipesRowsPerPage)
@@ -1141,9 +1527,15 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         ? filteredRecipes.length
         : recipeStart + _recipesRowsPerPage;
     final visibleRecipes = filteredRecipes.sublist(recipeStart, recipeEnd);
+    final screenW = MediaQuery.sizeOf(context).width;
+    final dishNameMaxWidth = screenW < 900 ? 200.0 : 240.0;
+    final instructionsColWidth = screenW < 1000 ? 160.0 : 250.0;
+
+    final panelOuterPad = screenW < 900 ? 16.0 : 40.0;
+    final headerInnerPad = screenW < 900 ? 20.0 : 32.0;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(40),
+      padding: EdgeInsets.all(panelOuterPad),
       physics: const BouncingScrollPhysics(),
       child: Container(
         width: double.infinity,
@@ -1163,50 +1555,42 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.all(32),
-              child: Row(
-                children: [
-                  Container(
+              padding: EdgeInsets.all(headerInnerPad),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrowHeader = constraints.maxWidth < 720;
+                  final titleStyle = TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: _mainText,
+                  );
+                  final accentBar = Container(
                     width: 4,
                     height: 24,
                     decoration: BoxDecoration(
                       color: primaryBrand,
                       borderRadius: BorderRadius.circular(4),
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(
-                    "Complete Recipe Library",
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      color: _mainText,
-                    ),
-                  ),
-                  const SizedBox(width: 32),
-                  // 🌿 ADDED: Search Field
-                  Expanded(
-                    child: TextField(
-                      controller: recipeSearchController,
-                      onChanged: (_) => setState(() => _recipesPage = 0),
-                      decoration: InputDecoration(
-                        hintText: "Search dish or category...",
-                        prefixIcon: const Icon(Icons.search, size: 20),
-                        filled: true,
-                        fillColor: _pageBg,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 0,
-                          horizontal: 16,
-                        ),
+                  );
+                  final searchField = TextField(
+                    controller: recipeSearchController,
+                    onChanged: (_) => setState(() => _recipesPage = 0),
+                    decoration: InputDecoration(
+                      hintText: "Search dish or category...",
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      filled: true,
+                      fillColor: _pageBg,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 0,
+                        horizontal: 16,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 32),
-                  OutlinedButton.icon(
+                  );
+                  final exportBtn = OutlinedButton.icon(
                     onPressed: _downloadRecipesList,
                     icon: const Icon(Icons.download_rounded, size: 18),
                     label: const Text("Export CSV"),
@@ -1221,8 +1605,59 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                  ),
-                ],
+                  );
+
+                  if (narrowHeader) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            accentBar,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                "Complete Recipe Library",
+                                style: titleStyle,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        searchField,
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: exportBtn,
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      accentBar,
+                      const SizedBox(width: 16),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 260),
+                        child: Text(
+                          "Complete Recipe Library",
+                          style: titleStyle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(child: searchField),
+                      const SizedBox(width: 16),
+                      exportBtn,
+                    ],
+                  );
+                },
               ),
             ),
             Divider(height: 1, color: _panelBorder),
@@ -1305,7 +1740,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                             ),
                             const SizedBox(width: 16),
                             SizedBox(
-                              width: 150,
+                              width: dishNameMaxWidth,
                               child: Text(
                                 r.name,
                                 style: TextStyle(
@@ -1363,7 +1798,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       ),
                       DataCell(
                         SizedBox(
-                          width: 250,
+                          width: instructionsColWidth,
                           child: Text(
                             r.instructions,
                             maxLines: 2,
@@ -1418,6 +1853,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     ? "No recipes"
                     : "Showing ${recipeStart + 1}-$recipeEnd of ${filteredRecipes.length}",
                 pageLabel: "${safeRecipesPage + 1}/$recipeTotalPages",
+                currentPage: safeRecipesPage + 1,
+                totalPages: recipeTotalPages,
+                onJumpToPage: (page) => setState(() => _recipesPage = page - 1),
                 canGoPrev: safeRecipesPage > 0,
                 canGoNext: safeRecipesPage < recipeTotalPages - 1,
                 onPrev: () => setState(() => _recipesPage = safeRecipesPage - 1),
@@ -1432,24 +1870,22 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   // --- ASYMMETRICAL PRO GRID DASHBOARD ---
   Widget _buildDashboard() {
+    final isCompactLayout = MediaQuery.of(context).size.width < 1300;
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(40),
+      padding: EdgeInsets.all(isCompactLayout ? 20 : 40),
       physics: const BouncingScrollPhysics(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildInsightsHero(),
+          const SizedBox(height: 22),
           _buildStatsRow(),
           const SizedBox(height: 32),
 
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // LEFT COLUMN (65% width) - Main Focus
-              Expanded(
-                flex: 14,
-                child: Column(
-                  children: [
-                    _bentoBox(
+          if (isCompactLayout)
+            Column(
+              children: [
+                _bentoBox(
                       "Search Insights",
                       "Most searched ingredients across the platform.",
                       Column(
@@ -1540,65 +1976,274 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           _buildIngredientBarChart(),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 32),
-                    _bentoBox(
-                      "API Traffic & Latency",
-                      "Real-time endpoint performance monitoring.",
-                      _buildApiUsageTable(),
-                      trailingIcon: Icons.visibility,
-                      onTrailingTap: _openApiUsageModal,
-                    ),
-                    const SizedBox(height: 32),
-                    _bentoBox(
-                      "System Health Status",
-                      "Recent critical alerts and warnings.",
-                      _buildErrorLogsSection(),
-                      trailingIcon: Icons.visibility,
-                      onTrailingTap: _openSystemHealthModal,
-                    ),
-                    const SizedBox(height: 32),
-                    _bentoBox(
-                      "Client performance",
-                      "Screen transitions and slow API calls from the app.",
-                      _buildPerformanceMetricsTable(),
-                      trailingIcon: Icons.visibility,
-                      onTrailingTap: _openPerformanceModal,
-                    ),
-                  ],
                 ),
-              ),
-
-              const SizedBox(width: 32),
-
-              // RIGHT COLUMN (35% width) - Secondary/Feed Focus
-              Expanded(
-                flex: 9,
-                child: Column(
-                  children: [
-                    _bentoBox(
+                const SizedBox(height: 24),
+                _bentoBox(
                       "Category Distribution",
                       "Content spread across recipe types.",
                       _buildCategoryPieChart(),
-                    ),
-                    const SizedBox(height: 32),
-                    _bentoBox(
+                ),
+                const SizedBox(height: 24),
+                _bentoBox(
                       "Trending Leaderboard",
                       "Top performing recipes right now.",
                       _buildTrendingList(),
-                    ),
-                    const SizedBox(height: 32),
-                    _bentoBox(
-                      "Activity Timeline",
-                      "Live feed of user interactions.",
-                      _buildActivityLogsTable(limit: 5),
-                      trailingIcon: Icons.visibility,
-                      onTrailingTap: _openActivityModal,
-                    ),
-                  ],
                 ),
+                const SizedBox(height: 24),
+                _bentoBox(
+                      "Operations Monitoring",
+                      "API traffic, activity timeline, system health, and client performance moved to a dedicated page.",
+                      _buildOperationsShortcut(),
+                ),
+              ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 14,
+                  child: Column(
+                    children: [
+                      _bentoBox(
+                        "Search Insights",
+                        "Most searched ingredients across the platform.",
+                        Column(
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                      );
+                                      if (picked != null) {
+                                        setState(() {
+                                          _selectedInsightDate = picked.toIso8601String();
+                                          _selectedInsightMonth = null;
+                                        });
+                                        await _reloadIngredientInsights();
+                                      }
+                                    },
+                                    child: Text(_selectedInsightDate ?? "Select Date"),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                        helpText: "Select Month",
+                                      );
+                                      if (picked != null) {
+                                        setState(() {
+                                          _selectedInsightMonth =
+                                              "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
+                                          _selectedInsightDate = null;
+                                        });
+                                        await _reloadIngredientInsights();
+                                      }
+                                    },
+                                    child: Text(_selectedInsightMonth ?? "Select Month"),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                IconButton(
+                                  onPressed: () async {
+                                    final now = DateTime.now();
+                                    final today =
+                                        "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+                                    setState(() {
+                                      _selectedInsightDate = today;
+                                      _selectedInsightMonth = null;
+                                    });
+                                    await _reloadIngredientInsights();
+                                  },
+                                  icon: const Icon(Icons.refresh),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 20),
+                            _buildIngredientBarChart(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      _bentoBox(
+                        "Operations Monitoring",
+                        "API traffic, activity timeline, system health, and client performance moved to a dedicated page.",
+                        _buildOperationsShortcut(),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 32),
+                Expanded(
+                  flex: 9,
+                  child: Column(
+                    children: [
+                      _bentoBox(
+                        "Category Distribution",
+                        "Content spread across recipe types.",
+                        _buildCategoryPieChart(),
+                      ),
+                      const SizedBox(height: 32),
+                      _bentoBox(
+                        "Trending Leaderboard",
+                        "Top performing recipes right now.",
+                        _buildTrendingList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOperationsShortcut() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            primaryBrand.withValues(alpha: _isDark ? 0.22 : 0.10),
+            _panelBg,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _brandStroke),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: _isDark ? 0.10 : 0.75),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _panelBorder),
+            ),
+            child: const Icon(Icons.monitor_heart_rounded, size: 20, color: primaryBrand),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Open Dedicated Operations Console",
+                  style: TextStyle(
+                    color: _mainText,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14.5,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  "View API traffic, timeline, system health, and client performance in one place.",
+                  style: TextStyle(
+                    color: _mutedText,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12.2,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            onPressed: () => setState(() => _selectedIndex = 3),
+            icon: const Icon(Icons.open_in_new_rounded, size: 16),
+            label: const Text("Open"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryBrand,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
-            ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInsightsHero() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            primaryBrand.withValues(alpha: _isDark ? 0.30 : 0.14),
+            primaryBrandLight.withValues(alpha: _isDark ? 0.22 : 0.10),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: _brandStroke),
+        boxShadow: [
+          BoxShadow(
+            color: primaryBrand.withValues(alpha: _isDark ? 0.25 : 0.12),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: _isDark ? 0.10 : 0.72),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.insights_rounded, color: primaryBrand),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Insights Command Deck",
+                  style: TextStyle(
+                    color: _mainText,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "Executive overview for growth, engagement, and recipe performance.",
+                  style: TextStyle(
+                    color: _mutedText,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1619,7 +2264,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       decoration: BoxDecoration(
         color: _panelBg,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _panelBorder),
+        border: Border.all(color: _panelBorder, width: 1.1),
         boxShadow: [
           BoxShadow(
             color: _panelShadowColor,
@@ -1631,51 +2276,69 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 4,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: primaryBrand,
-                  borderRadius: BorderRadius.circular(4),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: _pageBg,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _panelBorder),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: _brandSoft,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _brandStroke),
+                  ),
+                  child: Icon(Icons.dashboard_customize_rounded, size: 18, color: primaryBrand),
                 ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: _mainText,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          color: _mainText,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: _mutedText,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (trailingIcon != null && onTrailingTap != null)
+                  OutlinedButton.icon(
+                    onPressed: onTrailingTap,
+                    icon: Icon(trailingIcon, color: _mainText, size: 17),
+                    label: const Text("Open Full View"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _mainText,
+                      side: BorderSide(color: _panelBorder),
+                      backgroundColor: _panelBg,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: _mutedText,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (trailingIcon != null)
-                IconButton(
-                  icon: Icon(trailingIcon, color: _mutedText),
-                  onPressed: onTrailingTap,
-                  tooltip: "Download CSV",
-                  style: IconButton.styleFrom(backgroundColor: _pageBg),
-                ),
-            ],
+                  ),
+              ],
+            ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
           child,
         ],
       ),
@@ -1873,81 +2536,126 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         Icons.trending_up_rounded,
       );
     }
+    final topViews = popularRecipes
+        .map((e) => int.tryParse(e['views']?.toString() ?? '0') ?? 0)
+        .fold<int>(1, (a, b) => a > b ? a : b);
     return Column(
       children: popularRecipes.asMap().entries.map((entry) {
-        int index = entry.key;
-        var item = entry.value;
-        bool isTop3 = index < 3;
+        final index = entry.key;
+        final item = entry.value;
+        final rank = index + 1;
+        final views = int.tryParse(item['views']?.toString() ?? '0') ?? 0;
+        final ratio = (views / topViews).clamp(0.0, 1.0);
+        final isTop3 = index < 3;
+        final rankColor = switch (rank) {
+          1 => const Color(0xFFF59E0B),
+          2 => const Color(0xFF94A3B8),
+          3 => const Color(0xFFB45309),
+          _ => _mutedText
+        };
+        final recipeName = item['recipe'] != null
+            ? item['recipe']['name']?.toString() ?? 'Unknown Recipe'
+            : 'Unknown Recipe';
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           decoration: BoxDecoration(
-            color: isTop3 ? successEmerald.withOpacity(0.04) : surfaceWhite,
+            color: _panelBg,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: isTop3 ? successEmerald.withOpacity(0.2) : borderLight,
+              color: isTop3
+                  ? primaryBrand.withValues(alpha: _isDark ? 0.36 : 0.22)
+                  : _panelBorder,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: isTop3
+                    ? primaryBrand.withValues(alpha: _isDark ? 0.20 : 0.09)
+                    : Colors.black.withValues(alpha: _isDark ? 0.12 : 0.03),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-          child: Row(
+          child: Column(
             children: [
-              SizedBox(
-                width: 30,
-                child: Text(
-                  "#${index + 1}",
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: isTop3 ? successEmerald : borderLight,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  item['recipe'] != null
-                      ? item['recipe']['name']
-                      : 'Unknown Recipe',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: textMain,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: surfaceWhite,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: borderLight),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.remove_red_eye_rounded,
-                      size: 14,
-                      color: textMuted,
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: rankColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      "${item['views']}",
-                      style: const TextStyle(
-                        fontSize: 12,
+                    alignment: Alignment.center,
+                    child: Text(
+                      '#$rank',
+                      style: TextStyle(
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w900,
-                        color: textMain,
+                        color: rankColor,
                       ),
                     ),
-                  ],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      recipeName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: _mainText,
+                        fontSize: 14.2,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _pageBg,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: _panelBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.remove_red_eye_rounded,
+                          size: 14,
+                          color: _mutedText,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$views',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: _mainText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: ratio,
+                  minHeight: 6,
+                  backgroundColor: _pageBg,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    isTop3 ? primaryBrand : _mutedText.withValues(alpha: 0.6),
+                  ),
                 ),
               ),
             ],
           ),
         );
-      }).toList(),
+      }).toList(growable: false),
     );
   }
 
@@ -2102,6 +2810,20 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               ),
             ),
           ),
+        if (limit == null) ...[
+          const SizedBox(height: 10),
+          _buildStandardPaginationBar(
+            summary: "Loaded ${activityLogs.length} activity rows",
+            pageLabel: "$_activityPage/${_hasMoreActivity ? '?' : _activityPage}",
+            currentPage: _activityPage,
+            totalPages: null,
+            onJumpToPage: (page) => unawaited(_goToActivityPage(page)),
+            canGoPrev: _activityPage > 1,
+            canGoNext: _hasMoreActivity,
+            onPrev: () => unawaited(_goToActivityPage(_activityPage - 1)),
+            onNext: () => unawaited(_goToActivityPage(_activityPage + 1)),
+          ),
+        ],
       ],
     );
   }
@@ -2367,38 +3089,18 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           const SizedBox(height: 12),
 
                           if (hasMore)
-                            ElevatedButton(
-                              onPressed: isLoadingMore ? null : loadMore,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryBrand,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: isLoadingMore
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Text("Load More"),
+                            _buildModalLoadMoreButton(
+                              isLoading: isLoadingMore,
+                              onPressed: loadMore,
                             )
                           else
-                            Text(
-                              "No more activities",
-                              style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
-                            ),
+                            _buildModalEndText("No more activities"),
                         ],
                       ),
               ),
               actions: [
-                TextButton(
+                _buildDialogSecondaryButton(
                   onPressed: () => Navigator.pop(context),
-                  child: Text("Close", style: TextStyle(color: _mainText)),
                 ),
               ],
             );
@@ -2410,11 +3112,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   void _openApiUsageModal() {
     int page = 1;
-    int lastPage = 1;
-    int total = 0;
     List<dynamic> modalRows = [];
     bool isLoading = true;
     bool isLoadingMore = false;
+    bool hasMore = true;
+    String? selectedDate;
+    String? selectedMonth;
 
     showDialog(
       context: context,
@@ -2422,34 +3125,95 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             Future<void> loadInitial() async {
+              String? startDate;
+              String? endDate;
+              if (selectedDate != null) {
+                startDate = selectedDate;
+                endDate = selectedDate;
+              } else if (selectedMonth != null) {
+                final parts = selectedMonth!.split('-');
+                if (parts.length == 2) {
+                  final year = int.tryParse(parts[0]);
+                  final month = int.tryParse(parts[1]);
+                  if (year != null && month != null) {
+                    final first = DateTime(year, month, 1);
+                    final last = DateTime(year, month + 1, 0);
+                    String fmt(DateTime d) =>
+                        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+                    startDate = fmt(first);
+                    endDate = fmt(last);
+                  }
+                }
+              }
               final r = await ApiService.fetchApiUsagePaginated(
+                startDate: startDate,
+                endDate: endDate,
                 page: page,
                 perPage: _kApiUsagePerPage,
               );
-              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              final items = List<dynamic>.from(r['items'] as List? ?? []);
               setModalState(() {
-                modalRows = List<dynamic>.from(r['items'] as List? ?? []);
-                lastPage = (meta['last_page'] as num?)?.toInt() ?? 1;
-                total = (meta['total'] as num?)?.toInt() ?? modalRows.length;
+                modalRows = items;
                 isLoading = false;
+                hasMore = items.length == _kApiUsagePerPage;
               });
             }
 
             Future<void> loadMore() async {
-              if (isLoadingMore || page >= lastPage) return;
+              if (isLoadingMore || !hasMore) return;
               setModalState(() => isLoadingMore = true);
               page++;
+              String? startDate;
+              String? endDate;
+              if (selectedDate != null) {
+                startDate = selectedDate;
+                endDate = selectedDate;
+              } else if (selectedMonth != null) {
+                final parts = selectedMonth!.split('-');
+                if (parts.length == 2) {
+                  final year = int.tryParse(parts[0]);
+                  final month = int.tryParse(parts[1]);
+                  if (year != null && month != null) {
+                    final first = DateTime(year, month, 1);
+                    final last = DateTime(year, month + 1, 0);
+                    String fmt(DateTime d) =>
+                        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+                    startDate = fmt(first);
+                    endDate = fmt(last);
+                  }
+                }
+              }
               final r = await ApiService.fetchApiUsagePaginated(
+                startDate: startDate,
+                endDate: endDate,
                 page: page,
                 perPage: _kApiUsagePerPage,
               );
-              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              final newItems = List<dynamic>.from(r['items'] as List? ?? []);
               setModalState(() {
-                modalRows.addAll(List<dynamic>.from(r['items'] as List? ?? []));
-                lastPage = (meta['last_page'] as num?)?.toInt() ?? lastPage;
-                total = (meta['total'] as num?)?.toInt() ?? total;
+                modalRows.addAll(newItems);
+                hasMore = newItems.length == _kApiUsagePerPage;
+                isLoadingMore = false;
               });
-              setModalState(() => isLoadingMore = false);
+            }
+
+            Future<void> exportApiCsv() async {
+              final headers = ['Endpoint', 'Hits', 'Avg Latency (ms)'];
+              final rows = modalRows.map((row) {
+                return [
+                  "/${row['endpoint'] ?? 'unknown'}",
+                  (row['hits'] ?? 0).toString(),
+                  (double.tryParse(row['avg_latency']?.toString() ?? '0') ?? 0)
+                      .toStringAsFixed(0),
+                ];
+              }).toList();
+              await _exportToCSV('API_Traffic', headers, rows);
+            }
+
+            String fmtDate(String iso) {
+              final parsed = DateTime.tryParse(iso);
+              if (parsed == null) return iso;
+              return "${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
             }
 
             if (isLoading) loadInitial();
@@ -2459,99 +3223,254 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
               ),
-              title: const Text(
-                "All API Traffic",
-                style: TextStyle(fontWeight: FontWeight.w900),
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+              contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              title: Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                decoration: BoxDecoration(
+                  color: _pageBg,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _panelBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: primaryBrand.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.api_rounded,
+                        color: primaryBrand,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "All API Traffic",
+                            style: TextStyle(
+                              color: _mainText,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 19,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "Endpoint requests and latency metrics",
+                            style: TextStyle(
+                              color: _mutedText,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: modalRows.isEmpty ? null : exportApiCsv,
+                      icon: const Icon(Icons.download_rounded, size: 17),
+                      label: const Text("Export CSV"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _mainText,
+                        side: BorderSide(color: _panelBorder),
+                        backgroundColor: _panelBg,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               content: SizedBox(
-                width: 700,
+                width: 600,
                 height: 500,
                 child: isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : Column(
                         children: [
-                          Expanded(
-                            child: ListView.builder(
-                              itemCount: modalRows.length,
-                              itemBuilder: (context, index) {
-                                final log = modalRows[index];
-                                final latency = double.tryParse(
-                                      log['avg_latency']?.toString() ?? '0',
-                                    ) ??
-                                    0;
-                                final isSlow = latency > 400;
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  padding: const EdgeInsets.all(14),
-                                  decoration: BoxDecoration(
-                                    color: bgSoft,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: borderLight),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _pageBg,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: _panelBorder),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedDate = fmtDate(picked.toIso8601String());
+                                          selectedMonth = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.calendar_month_rounded, size: 18),
+                                    label: Text(selectedDate == null ? "Select Date" : fmtDate(selectedDate!)),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                    ),
                                   ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          "/${log['endpoint'] ?? 'unknown'}",
-                                          style: const TextStyle(
-                                            fontFamily: 'monospace',
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 12,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                        helpText: "Select Month",
+                                        fieldHintText: "MM/YYYY",
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedMonth =
+                                              "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
+                                          selectedDate = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.date_range_rounded, size: 18),
+                                    label: Text(selectedMonth ?? "Select Month"),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                IconButton.filledTonal(
+                                  onPressed: () {
+                                    setModalState(() {
+                                      selectedDate = null;
+                                      selectedMonth = null;
+                                      page = 1;
+                                      isLoading = true;
+                                    });
+                                  },
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  tooltip: 'Reset filters',
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+                              decoration: BoxDecoration(
+                                color: _pageBg.withValues(alpha: 0.6),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: _panelBorder),
+                              ),
+                              child: ListView.builder(
+                                itemCount: modalRows.length,
+                                itemBuilder: (context, index) {
+                                  final log = modalRows[index];
+                                  final latency = double.tryParse(
+                                        log['avg_latency']?.toString() ?? '0',
+                                      ) ??
+                                      0;
+                                  final isSlow = latency > 400;
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 10),
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: _panelBg,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: _panelBorder),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            "/${log['endpoint'] ?? 'unknown'}",
+                                            style: TextStyle(
+                                              fontFamily: 'monospace',
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 12,
+                                              color: _mainText,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      Text("${log['hits'] ?? 0} reqs"),
-                                      const SizedBox(width: 12),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 5,
+                                        Text(
+                                          "${log['hits'] ?? 0} reqs",
+                                          style: TextStyle(color: _mutedText),
                                         ),
-                                        decoration: BoxDecoration(
-                                          color: isSlow
-                                              ? dangerRed.withOpacity(0.1)
-                                              : successEmerald.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(16),
+                                        const SizedBox(width: 12),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 5,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: isSlow
+                                                ? dangerRed.withValues(alpha: 0.1)
+                                                : successEmerald.withValues(alpha: 0.1),
+                                            borderRadius: BorderRadius.circular(16),
+                                          ),
+                                          child: Text(
+                                            "${latency.toStringAsFixed(0)} ms",
+                                            style: TextStyle(
+                                              color: isSlow ? dangerRed : successEmerald,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
                                         ),
-                                        child: Text(
-                                          "${latency.toStringAsFixed(0)} ms",
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            "Loaded ${modalRows.length} of $total",
-                            style: const TextStyle(
-                              color: textMuted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          if (page < lastPage)
-                            TextButton(
-                              onPressed: isLoadingMore ? null : loadMore,
-                              child: isLoadingMore
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Text("Load More"),
-                            ),
+                          const SizedBox(height: 12),
+                          if (hasMore)
+                            _buildModalLoadMoreButton(
+                              isLoading: isLoadingMore,
+                              onPressed: loadMore,
+                            )
+                          else
+                            _buildModalEndText("No more API traffic logs"),
                         ],
                       ),
               ),
               actions: [
-                TextButton(
+                _buildDialogSecondaryButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("Close"),
                 ),
               ],
             );
@@ -2563,11 +3482,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   void _openSystemHealthModal() {
     int page = 1;
-    int lastPage = 1;
-    int total = 0;
     List<dynamic> modalRows = [];
     bool isLoading = true;
     bool isLoadingMore = false;
+    bool hasMore = true;
+    String? selectedDate;
+    String? selectedMonth;
 
     showDialog(
       context: context,
@@ -2575,36 +3495,93 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             Future<void> loadInitial() async {
+              String? startDate;
+              String? endDate;
+              if (selectedDate != null) {
+                startDate = selectedDate;
+                endDate = selectedDate;
+              } else if (selectedMonth != null) {
+                final parts = selectedMonth!.split('-');
+                if (parts.length == 2) {
+                  final year = int.tryParse(parts[0]);
+                  final month = int.tryParse(parts[1]);
+                  if (year != null && month != null) {
+                    final first = DateTime(year, month, 1);
+                    final last = DateTime(year, month + 1, 0);
+                    String fmt(DateTime d) =>
+                        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+                    startDate = fmt(first);
+                    endDate = fmt(last);
+                  }
+                }
+              }
               final r = await ApiService.fetchErrorLogsPaginated(
+                startDate: startDate,
+                endDate: endDate,
                 page: page,
                 perPage: _kErrorLogsPerPage,
               );
-              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              final items = List<dynamic>.from(r['items'] as List? ?? []);
               setModalState(() {
-                modalRows = List<dynamic>.from(r['items'] as List? ?? []);
-                lastPage = (meta['last_page'] as num?)?.toInt() ?? 1;
-                total = (meta['total'] as num?)?.toInt() ?? modalRows.length;
+                modalRows = items;
                 isLoading = false;
+                hasMore = items.length == _kErrorLogsPerPage;
               });
             }
 
             Future<void> loadMore() async {
-              if (isLoadingMore || page >= lastPage) return;
+              if (isLoadingMore || !hasMore) return;
               setModalState(() => isLoadingMore = true);
               page++;
+              String? startDate;
+              String? endDate;
+              if (selectedDate != null) {
+                startDate = selectedDate;
+                endDate = selectedDate;
+              } else if (selectedMonth != null) {
+                final parts = selectedMonth!.split('-');
+                if (parts.length == 2) {
+                  final year = int.tryParse(parts[0]);
+                  final month = int.tryParse(parts[1]);
+                  if (year != null && month != null) {
+                    final first = DateTime(year, month, 1);
+                    final last = DateTime(year, month + 1, 0);
+                    String fmt(DateTime d) =>
+                        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+                    startDate = fmt(first);
+                    endDate = fmt(last);
+                  }
+                }
+              }
               final r = await ApiService.fetchErrorLogsPaginated(
+                startDate: startDate,
+                endDate: endDate,
                 page: page,
                 perPage: _kErrorLogsPerPage,
               );
-              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              final newItems = List<dynamic>.from(r['items'] as List? ?? []);
               setModalState(() {
-                modalRows.addAll(
-                  List<dynamic>.from(r['items'] as List? ?? []),
-                );
-                lastPage = (meta['last_page'] as num?)?.toInt() ?? lastPage;
-                total = (meta['total'] as num?)?.toInt() ?? total;
+                modalRows.addAll(newItems);
+                hasMore = newItems.length == _kErrorLogsPerPage;
+                isLoadingMore = false;
               });
-              setModalState(() => isLoadingMore = false);
+            }
+
+            Future<void> exportSystemCsv() async {
+              final headers = ['Message', 'Endpoint'];
+              final rows = modalRows.map((row) {
+                return [
+                  (row['message'] ?? 'Unhandled error').toString(),
+                  "/${row['endpoint'] ?? 'unknown'}",
+                ];
+              }).toList();
+              await _exportToCSV('System_Health_Logs', headers, rows);
+            }
+
+            String fmtDate(String iso) {
+              final parsed = DateTime.tryParse(iso);
+              if (parsed == null) return iso;
+              return "${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
             }
 
             if (isLoading) loadInitial();
@@ -2614,89 +3591,235 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
               ),
-              title: const Text(
-                "All System Health Logs",
-                style: TextStyle(fontWeight: FontWeight.w900),
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+              contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              title: Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                decoration: BoxDecoration(
+                  color: _pageBg,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _panelBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: dangerRed.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.health_and_safety_rounded,
+                        color: dangerRed,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "All System Health Logs",
+                            style: TextStyle(
+                              color: _mainText,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 19,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "Critical errors and warnings from the system",
+                            style: TextStyle(
+                              color: _mutedText,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: modalRows.isEmpty ? null : exportSystemCsv,
+                      icon: const Icon(Icons.download_rounded, size: 17),
+                      label: const Text("Export CSV"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _mainText,
+                        side: BorderSide(color: _panelBorder),
+                        backgroundColor: _panelBg,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               content: SizedBox(
-                width: 700,
+                width: 600,
                 height: 500,
                 child: isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : Column(
                         children: [
-                          Expanded(
-                            child: ListView.builder(
-                              itemCount: modalRows.length,
-                              itemBuilder: (context, index) {
-                                final error = modalRows[index];
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  padding: const EdgeInsets.all(14),
-                                  decoration: BoxDecoration(
-                                    color: dangerRed.withOpacity(0.02),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: dangerRed.withOpacity(0.2),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _pageBg,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: _panelBorder),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedDate = fmtDate(picked.toIso8601String());
+                                          selectedMonth = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.calendar_month_rounded, size: 18),
+                                    label: Text(selectedDate == null ? "Select Date" : fmtDate(selectedDate!)),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
                                     ),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        (error['message'] ?? 'Unhandled error')
-                                            .toString(),
-                                        style: const TextStyle(
-                                          color: dangerRed,
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 13,
-                                        ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                        helpText: "Select Month",
+                                        fieldHintText: "MM/YYYY",
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedMonth =
+                                              "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
+                                          selectedDate = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.date_range_rounded, size: 18),
+                                    label: Text(selectedMonth ?? "Select Month"),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
                                       ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        "/${error['endpoint'] ?? 'unknown'}",
-                                        style: const TextStyle(
-                                          color: textMuted,
-                                          fontSize: 11,
-                                          fontFamily: 'monospace',
-                                        ),
-                                      ),
-                                    ],
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                    ),
                                   ),
-                                );
-                              },
+                                ),
+                                const SizedBox(width: 10),
+                                IconButton.filledTonal(
+                                  onPressed: () {
+                                    setModalState(() {
+                                      selectedDate = null;
+                                      selectedMonth = null;
+                                      page = 1;
+                                      isLoading = true;
+                                    });
+                                  },
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  tooltip: 'Reset filters',
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            "Loaded ${modalRows.length} of $total",
-                            style: const TextStyle(
-                              color: textMuted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          if (page < lastPage)
-                            TextButton(
-                              onPressed: isLoadingMore ? null : loadMore,
-                              child: isLoadingMore
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+                              decoration: BoxDecoration(
+                                color: _pageBg.withValues(alpha: 0.6),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: _panelBorder),
+                              ),
+                              child: ListView.builder(
+                                itemCount: modalRows.length,
+                                itemBuilder: (context, index) {
+                                  final error = modalRows[index];
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 10),
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: dangerRed.withValues(alpha: 0.04),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: dangerRed.withValues(alpha: 0.18),
                                       ),
-                                    )
-                                  : const Text("Load More"),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          (error['message'] ?? 'Unhandled error')
+                                              .toString(),
+                                          style: const TextStyle(
+                                            color: dangerRed,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          "/${error['endpoint'] ?? 'unknown'}",
+                                          style: TextStyle(
+                                            color: _mutedText,
+                                            fontSize: 11,
+                                            fontFamily: 'monospace',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
+                          ),
+                          const SizedBox(height: 12),
+                          if (hasMore)
+                            _buildModalLoadMoreButton(
+                              isLoading: isLoadingMore,
+                              onPressed: loadMore,
+                            )
+                          else
+                            _buildModalEndText("No more system health logs"),
                         ],
                       ),
               ),
               actions: [
-                TextButton(
+                _buildDialogSecondaryButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("Close"),
                 ),
               ],
             );
@@ -2708,11 +3831,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   void _openPerformanceModal() {
     int page = 1;
-    int lastPage = 1;
-    int total = 0;
     List<dynamic> modalRows = [];
     bool isLoading = true;
     bool isLoadingMore = false;
+    bool hasMore = true;
+    String? selectedDate;
+    String? selectedMonth;
 
     showDialog(
       context: context,
@@ -2720,36 +3844,94 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             Future<void> loadInitial() async {
+              String? startDate;
+              String? endDate;
+              if (selectedDate != null) {
+                startDate = selectedDate;
+                endDate = selectedDate;
+              } else if (selectedMonth != null) {
+                final parts = selectedMonth!.split('-');
+                if (parts.length == 2) {
+                  final year = int.tryParse(parts[0]);
+                  final month = int.tryParse(parts[1]);
+                  if (year != null && month != null) {
+                    final first = DateTime(year, month, 1);
+                    final last = DateTime(year, month + 1, 0);
+                    String fmt(DateTime d) =>
+                        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+                    startDate = fmt(first);
+                    endDate = fmt(last);
+                  }
+                }
+              }
               final r = await ApiService.fetchPerformanceMetricsPaginated(
+                startDate: startDate,
+                endDate: endDate,
                 page: page,
                 perPage: _kPerformancePerPage,
               );
-              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              final items = List<dynamic>.from(r['items'] as List? ?? []);
               setModalState(() {
-                modalRows = List<dynamic>.from(r['items'] as List? ?? []);
-                lastPage = (meta['last_page'] as num?)?.toInt() ?? 1;
-                total = (meta['total'] as num?)?.toInt() ?? modalRows.length;
+                modalRows = items;
                 isLoading = false;
+                hasMore = items.length == _kPerformancePerPage;
               });
             }
 
             Future<void> loadMore() async {
-              if (isLoadingMore || page >= lastPage) return;
+              if (isLoadingMore || !hasMore) return;
               setModalState(() => isLoadingMore = true);
               page++;
+              String? startDate;
+              String? endDate;
+              if (selectedDate != null) {
+                startDate = selectedDate;
+                endDate = selectedDate;
+              } else if (selectedMonth != null) {
+                final parts = selectedMonth!.split('-');
+                if (parts.length == 2) {
+                  final year = int.tryParse(parts[0]);
+                  final month = int.tryParse(parts[1]);
+                  if (year != null && month != null) {
+                    final first = DateTime(year, month, 1);
+                    final last = DateTime(year, month + 1, 0);
+                    String fmt(DateTime d) =>
+                        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+                    startDate = fmt(first);
+                    endDate = fmt(last);
+                  }
+                }
+              }
               final r = await ApiService.fetchPerformanceMetricsPaginated(
+                startDate: startDate,
+                endDate: endDate,
                 page: page,
                 perPage: _kPerformancePerPage,
               );
-              final meta = Map<String, dynamic>.from(r['meta'] as Map? ?? {});
+              final newItems = List<dynamic>.from(r['items'] as List? ?? []);
               setModalState(() {
-                modalRows.addAll(
-                  List<dynamic>.from(r['items'] as List? ?? []),
-                );
-                lastPage = (meta['last_page'] as num?)?.toInt() ?? lastPage;
-                total = (meta['total'] as num?)?.toInt() ?? total;
+                modalRows.addAll(newItems);
+                hasMore = newItems.length == _kPerformancePerPage;
+                isLoadingMore = false;
               });
-              setModalState(() => isLoadingMore = false);
+            }
+
+            Future<void> exportPerformanceCsv() async {
+              final headers = ['Type', 'Name', 'Duration (ms)'];
+              final rows = modalRows.map((row) {
+                return [
+                  (row['kind'] ?? '').toString(),
+                  (row['name'] ?? '').toString(),
+                  (row['duration_ms'] ?? 0).toString(),
+                ];
+              }).toList();
+              await _exportToCSV('Client_Performance', headers, rows);
+            }
+
+            String fmtDate(String iso) {
+              final parsed = DateTime.tryParse(iso);
+              if (parsed == null) return iso;
+              return "${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
             }
 
             if (isLoading) loadInitial();
@@ -2759,86 +3941,235 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
               ),
-              title: const Text(
-                "All Client Performance Metrics",
-                style: TextStyle(fontWeight: FontWeight.w900),
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+              contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              title: Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                decoration: BoxDecoration(
+                  color: _pageBg,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _panelBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: successEmerald.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.speed_rounded,
+                        color: successEmerald,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "All Client Performance Metrics",
+                            style: TextStyle(
+                              color: _mainText,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 19,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "Frontend timing and route performance events",
+                            style: TextStyle(
+                              color: _mutedText,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: modalRows.isEmpty ? null : exportPerformanceCsv,
+                      icon: const Icon(Icons.download_rounded, size: 17),
+                      label: const Text("Export CSV"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _mainText,
+                        side: BorderSide(color: _panelBorder),
+                        backgroundColor: _panelBg,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               content: SizedBox(
-                width: 700,
+                width: 600,
                 height: 500,
                 child: isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : Column(
                         children: [
-                          Expanded(
-                            child: ListView.builder(
-                              itemCount: modalRows.length,
-                              itemBuilder: (context, index) {
-                                final row = modalRows[index];
-                                final sevColor =
-                                    (row['duration_ms'] as int? ?? 0) > 1500
-                                    ? warningAmber
-                                    : successEmerald;
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: bgSoft,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: borderLight),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.timeline,
-                                        color: sevColor,
-                                        size: 18,
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _pageBg,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: _panelBorder),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedDate = fmtDate(picked.toIso8601String());
+                                          selectedMonth = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.calendar_month_rounded, size: 18),
+                                    label: Text(selectedDate == null ? "Select Date" : fmtDate(selectedDate!)),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
                                       ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Text(
-                                          '${row['kind'] ?? ''} · ${row['name'] ?? ''} · ${row['duration_ms'] ?? 0} ms',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 12,
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: DateTime.now(),
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime.now(),
+                                        helpText: "Select Month",
+                                        fieldHintText: "MM/YYYY",
+                                      );
+                                      if (picked != null) {
+                                        setModalState(() {
+                                          selectedMonth =
+                                              "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
+                                          selectedDate = null;
+                                          page = 1;
+                                          isLoading = true;
+                                        });
+                                      }
+                                    },
+                                    icon: const Icon(Icons.date_range_rounded, size: 18),
+                                    label: Text(selectedMonth ?? "Select Month"),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: _mainText,
+                                      side: BorderSide(color: _panelBorder),
+                                      backgroundColor: _panelBg,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                IconButton.filledTonal(
+                                  onPressed: () {
+                                    setModalState(() {
+                                      selectedDate = null;
+                                      selectedMonth = null;
+                                      page = 1;
+                                      isLoading = true;
+                                    });
+                                  },
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  tooltip: 'Reset filters',
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+                              decoration: BoxDecoration(
+                                color: _pageBg.withValues(alpha: 0.6),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: _panelBorder),
+                              ),
+                              child: ListView.builder(
+                                itemCount: modalRows.length,
+                                itemBuilder: (context, index) {
+                                  final row = modalRows[index];
+                                  final durationMs =
+                                      int.tryParse(row['duration_ms']?.toString() ?? '0') ?? 0;
+                                  final sevColor = durationMs > 1500
+                                      ? warningAmber
+                                      : successEmerald;
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 10),
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: _panelBg,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: _panelBorder),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.timeline_rounded,
+                                          color: sevColor,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            '${row['kind'] ?? ''} · ${row['name'] ?? ''} · $durationMs ms',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 12,
+                                              color: _mainText,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            "Loaded ${modalRows.length} of $total",
-                            style: const TextStyle(
-                              color: textMuted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          if (page < lastPage)
-                            TextButton(
-                              onPressed: isLoadingMore ? null : loadMore,
-                              child: isLoadingMore
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Text("Load More"),
-                            ),
+                          const SizedBox(height: 12),
+                          if (hasMore)
+                            _buildModalLoadMoreButton(
+                              isLoading: isLoadingMore,
+                              onPressed: loadMore,
+                            )
+                          else
+                            _buildModalEndText("No more performance logs"),
                         ],
                       ),
               ),
               actions: [
-                TextButton(
+                _buildDialogSecondaryButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text("Close"),
                 ),
               ],
             );
@@ -2943,9 +4274,13 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         _buildStandardPaginationBar(
           summary: "Loaded ${apiUsageData.length} of $_apiUsageTotal API rows",
           pageLabel: "$_apiUsagePage/$_apiUsageLastPage",
-          actionLabel: _apiUsagePage < _apiUsageLastPage ? "Load More" : null,
-          onAction: _loadMoreApiUsage,
-          actionLoading: _apiUsageLoadingMore,
+          currentPage: _apiUsagePage,
+          totalPages: _apiUsageLastPage,
+          onJumpToPage: (page) => unawaited(_goToApiUsagePage(page)),
+          canGoPrev: _apiUsagePage > 1,
+          canGoNext: _apiUsagePage < _apiUsageLastPage,
+          onPrev: () => unawaited(_goToApiUsagePage(_apiUsagePage - 1)),
+          onNext: () => unawaited(_goToApiUsagePage(_apiUsagePage + 1)),
         ),
       ],
     );
@@ -3012,6 +4347,30 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     await _reloadApiUsage(reset: false);
   }
 
+  Future<void> _goToApiUsagePage(int page) async {
+    if (page < 1 || page > _apiUsageLastPage) return;
+    setState(() => _apiUsageLoading = true);
+    try {
+      final r = await ApiService.fetchApiUsagePaginated(
+        page: page,
+        perPage: _kApiUsagePerPage,
+      );
+      if (!mounted) return;
+      setState(() {
+        apiUsageData = List<dynamic>.from(r['items'] as List? ?? []);
+        final meta = r['meta'];
+        if (meta is Map) {
+          _applyApiUsageMeta(Map<String, dynamic>.from(meta));
+        } else {
+          _apiUsagePage = page;
+        }
+        _apiUsageLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _apiUsageLoading = false);
+    }
+  }
+
   Future<void> _reloadPerformanceMetrics({bool reset = false}) async {
     if (reset) {
       _performancePage = 1;
@@ -3052,6 +4411,30 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     setState(() => _performanceLoadingMore = true);
     _performancePage++;
     await _reloadPerformanceMetrics(reset: false);
+  }
+
+  Future<void> _goToPerformancePage(int page) async {
+    if (page < 1 || page > _performanceLastPage) return;
+    setState(() => _performanceLoading = true);
+    try {
+      final r = await ApiService.fetchPerformanceMetricsPaginated(
+        page: page,
+        perPage: _kPerformancePerPage,
+      );
+      if (!mounted) return;
+      setState(() {
+        performanceMetrics = List<dynamic>.from(r['items'] as List? ?? []);
+        final meta = r['meta'];
+        if (meta is Map) {
+          _applyPerformanceMeta(Map<String, dynamic>.from(meta));
+        } else {
+          _performancePage = page;
+        }
+        _performanceLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _performanceLoading = false);
+    }
   }
 
   Future<void> _reloadErrorLogs({bool resetPage = false, bool append = false}) async {
@@ -3096,6 +4479,57 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     setState(() => _errorLogsLoading = true);
     _errorLogsPage++;
     await _reloadErrorLogs(append: true);
+  }
+
+  Future<void> _goToErrorLogsPage(int page) async {
+    if (page < 1 || page > _errorLogsLastPage) return;
+    setState(() => _errorLogsLoading = true);
+    try {
+      final r = await ApiService.fetchErrorLogsPaginated(
+        severity: _errorSeverity == 'all' ? null : _errorSeverity,
+        errorType: _errorTypeController.text.trim().isEmpty
+            ? null
+            : _errorTypeController.text.trim(),
+        startDate: _errorStartController.text.trim().isEmpty
+            ? null
+            : _errorStartController.text.trim(),
+        endDate: _errorEndController.text.trim().isEmpty
+            ? null
+            : _errorEndController.text.trim(),
+        page: page,
+        perPage: _kErrorLogsPerPage,
+      );
+      if (!mounted) return;
+      setState(() {
+        errorLogs = List<dynamic>.from(r['items'] as List? ?? []);
+        final meta = r['meta'];
+        if (meta is Map) {
+          _applyErrorLogsMeta(Map<String, dynamic>.from(meta));
+        } else {
+          _errorLogsPage = page;
+        }
+        _errorLogsLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _errorLogsLoading = false);
+    }
+  }
+
+  Future<void> _goToActivityPage(int page) async {
+    if (page < 1) return;
+    setState(() => _isLoadingMore = true);
+    try {
+      final logs = await ApiService.fetchActivityLogs(page);
+      if (!mounted) return;
+      setState(() {
+        _activityPage = page;
+        activityLogs = logs;
+        _hasMoreActivity = logs.length == 10;
+        _isLoadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
   }
 
   Future<void> _pickErrorDate(TextEditingController controller) async {
@@ -3305,9 +4739,13 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       child: _buildStandardPaginationBar(
         summary: "Loaded ${errorLogs.length} of $_errorLogsTotal system errors",
         pageLabel: "$_errorLogsPage/$_errorLogsLastPage",
-        actionLabel: _errorLogsPage < _errorLogsLastPage ? "Load More" : null,
-        onAction: _loadMoreErrorLogs,
-        actionLoading: _errorLogsLoading,
+        currentPage: _errorLogsPage,
+        totalPages: _errorLogsLastPage,
+        onJumpToPage: (page) => unawaited(_goToErrorLogsPage(page)),
+        canGoPrev: _errorLogsPage > 1,
+        canGoNext: _errorLogsPage < _errorLogsLastPage,
+        onPrev: () => unawaited(_goToErrorLogsPage(_errorLogsPage - 1)),
+        onNext: () => unawaited(_goToErrorLogsPage(_errorLogsPage + 1)),
       ),
     );
   }
@@ -3369,9 +4807,13 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         _buildStandardPaginationBar(
           summary: "Loaded ${performanceMetrics.length} of $_performanceTotal metrics",
           pageLabel: "$_performancePage/$_performanceLastPage",
-          actionLabel: _performancePage < _performanceLastPage ? "Load More" : null,
-          onAction: _loadMorePerformanceMetrics,
-          actionLoading: _performanceLoadingMore,
+          currentPage: _performancePage,
+          totalPages: _performanceLastPage,
+          onJumpToPage: (page) => unawaited(_goToPerformancePage(page)),
+          canGoPrev: _performancePage > 1,
+          canGoNext: _performancePage < _performanceLastPage,
+          onPrev: () => unawaited(_goToPerformancePage(_performancePage - 1)),
+          onNext: () => unawaited(_goToPerformancePage(_performancePage + 1)),
         ),
       ],
     );
@@ -3479,6 +4921,49 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     );
   }
 
+  Widget _buildOperationsMonitorView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(40),
+      physics: const BouncingScrollPhysics(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _bentoBox(
+            "API Traffic & Latency",
+            "Real-time endpoint performance monitoring.",
+            _buildApiUsageTable(),
+            trailingIcon: Icons.visibility,
+            onTrailingTap: _openApiUsageModal,
+          ),
+          const SizedBox(height: 28),
+          _bentoBox(
+            "Activity Timeline",
+            "Live feed of user interactions.",
+            _buildActivityLogsTable(),
+            trailingIcon: Icons.visibility,
+            onTrailingTap: _openActivityModal,
+          ),
+          const SizedBox(height: 28),
+          _bentoBox(
+            "System Health Status",
+            "Recent critical alerts and warnings.",
+            _buildErrorLogsSection(),
+            trailingIcon: Icons.visibility,
+            onTrailingTap: _openSystemHealthModal,
+          ),
+          const SizedBox(height: 28),
+          _bentoBox(
+            "Client Performance",
+            "Screen transitions and slow API calls from the app.",
+            _buildPerformanceMetricsTable(),
+            trailingIcon: Icons.visibility,
+            onTrailingTap: _openPerformanceModal,
+          ),
+        ],
+      ),
+    );
+  }
+
   // --- HEADER & SIDEBAR ---
   String get _currentHeaderTitle {
     switch (_selectedIndex) {
@@ -3486,6 +4971,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         return "User Directory";
       case 2:
         return "Recipe Library";
+      case 3:
+        return "Operations Monitor";
       default:
         return "Dashboard Overview";
     }
@@ -3497,6 +4984,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         return "Manage accounts, roles, and permissions.";
       case 2:
         return "Browse, edit, and moderate published recipes.";
+      case 3:
+        return "Track API traffic, app activity, system health, and client performance.";
       default:
         return "Real-time analytics and platform monitoring.";
     }
@@ -3569,9 +5058,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             },
           ),
           actions: [
-            TextButton(
+            _buildDialogSecondaryButton(
               onPressed: () => Navigator.pop(ctx),
-              child: Text("Close", style: TextStyle(color: _mutedText)),
             ),
           ],
         );
@@ -3618,11 +5106,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             ),
           ),
           actions: [
-            TextButton(
+            _buildDialogSecondaryButton(
               onPressed: () => Navigator.pop(ctx),
-              child: Text('Close', style: TextStyle(color: _mutedText)),
             ),
-            ElevatedButton(
+            _buildDialogPrimaryButton(
+              label: 'Generate',
+              icon: Icons.auto_awesome_rounded,
               onPressed: () async {
                 try {
                   final ingredients = ingredientsController.text
@@ -3646,7 +5135,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   _showSnackBar('Auto-tag failed: $e', isError: true);
                 }
               },
-              child: const Text('Generate'),
             ),
           ],
         );
@@ -3654,9 +5142,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader({
+    bool isCompactLayout = false,
+    VoidCallback? onOpenMenu,
+  }) {
+    final width = MediaQuery.of(context).size.width;
+    final horizontalPadding = width < 1200 ? 24.0 : 40.0;
     return Container(
-      padding: const EdgeInsets.fromLTRB(40, 22, 40, 18),
+      padding: EdgeInsets.fromLTRB(horizontalPadding, 20, horizontalPadding, 18),
       decoration: BoxDecoration(
         color: _panelBg,
         border: Border(bottom: BorderSide(color: _panelBorder)),
@@ -3671,6 +5164,24 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _brandSoft,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: _brandStroke),
+                      ),
+                      child: Text(
+                        "ADMIN CONTROL CENTER",
+                        style: TextStyle(
+                          color: primaryBrand,
+                          fontSize: 10.5,
+                          letterSpacing: 0.8,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     Text(
                       _currentHeaderTitle,
                       style: TextStyle(
@@ -3692,7 +5203,46 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   ],
                 ),
               ),
-              const SizedBox(width: 16),
+              if (isCompactLayout) ...[
+                const SizedBox(width: 8),
+                _headerIconAction(
+                  tooltip: "Open navigation",
+                  icon: Icons.menu_rounded,
+                  onPressed: onOpenMenu ?? () {},
+                ),
+                const SizedBox(width: 8),
+              ] else
+                const SizedBox(width: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _pageBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _panelBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: successEmerald,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      "Live",
+                      style: TextStyle(
+                        color: _mainText,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -3775,96 +5325,119 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }
 
   Widget _buildStatsRow() {
+    final compact = MediaQuery.of(context).size.width < 1300;
+    final cards = [
+      _statCard("Total Users", totalUsers, Icons.people_alt_rounded, primaryBrand),
+      _statCard("Published Recipes", totalRecipes, Icons.menu_book_rounded, warningAmber),
+      _statCard("Total Views", activityStats?['views'] ?? 0, Icons.visibility_rounded, successEmerald),
+      _statCard("Total Favorites", activityStats?['favorites'] ?? 0, Icons.favorite_rounded, dangerRed),
+    ];
+    if (compact) {
+      return Wrap(
+        spacing: 14,
+        runSpacing: 14,
+        children: cards.map((c) => SizedBox(width: 280, child: c)).toList(),
+      );
+    }
     return Row(
-      children: [
-        _statCard(
-          "Total Users",
-          totalUsers,
-          Icons.people_alt_rounded,
-          primaryBrand,
-        ),
-        _statCard(
-          "Published Recipes",
-          totalRecipes,
-          Icons.menu_book_rounded,
-          warningAmber,
-        ),
-        _statCard(
-          "Total Views",
-          activityStats?['views'] ?? 0,
-          Icons.visibility_rounded,
-          successEmerald,
-        ),
-        _statCard(
-          "Total Favorites",
-          activityStats?['favorites'] ?? 0,
-          Icons.favorite_rounded,
-          dangerRed,
-        ),
-      ],
+      children: cards
+          .asMap()
+          .entries
+          .map((entry) => Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(right: entry.key == cards.length - 1 ? 0 : 16),
+                  child: entry.value,
+                ),
+              ))
+          .toList(),
     );
   }
 
   Widget _statCard(String title, dynamic value, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        margin: const EdgeInsets.only(right: 24),
-        padding: const EdgeInsets.all(28),
-        decoration: BoxDecoration(
-          color: _panelBg,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: _panelBorder),
-          boxShadow: [
-            BoxShadow(
-              color: _isDark
-                  ? Colors.black.withOpacity(0.25)
-                  : Colors.black.withOpacity(0.02),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
-            ),
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            color.withValues(alpha: _isDark ? 0.20 : 0.10),
+            _panelBg,
           ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: _isDark ? 0.32 : 0.24)),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: _isDark ? 0.20 : 0.10),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: _isDark ? 0.08 : 0.66),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: color, size: 20),
               ),
-              child: Icon(icon, color: color, size: 28),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              value.toString(),
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.w900,
-                color: _mainText,
-                letterSpacing: -1,
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  "LIVE",
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.6,
+                  ),
+                ),
               ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Text(
+            value.toString(),
+            style: TextStyle(
+              fontSize: 30,
+              fontWeight: FontWeight.w900,
+              color: _mainText,
+              letterSpacing: -0.8,
             ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: TextStyle(
-                color: _mutedText,
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
-                letterSpacing: 0.5,
-              ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            style: TextStyle(
+              color: _mutedText,
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
+              letterSpacing: 0.4,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildSidebar() {
     return Container(
-      width: 272,
-      color: _sidebarBg,
+      width: 284,
+      decoration: BoxDecoration(
+        color: _isDark ? _sidebarBg.withValues(alpha: 0.92) : const Color(0xFF222534),
+      ),
       child: Column(
         children: [
           Expanded(
@@ -3877,11 +5450,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 18),
                     child: Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                      padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
                       decoration: BoxDecoration(
-                        color: _sidebarText.withOpacity(0.05),
+                        color: _sidebarSurface,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: _sidebarText.withOpacity(0.10)),
+                        border: Border.all(color: _sidebarBorder),
                       ),
                       child: Row(
                         children: [
@@ -3889,7 +5462,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                             width: 38,
                             height: 38,
                             decoration: BoxDecoration(
-                              color: primaryBrand.withOpacity(0.16),
+                              color: primaryBrand.withValues(alpha: 0.14),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Icon(
@@ -3907,8 +5480,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                   "Core Admin",
                                   style: TextStyle(
                                     color: _sidebarText,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13.5,
                                   ),
                                 ),
                                 const SizedBox(height: 2),
@@ -3916,8 +5489,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                   "System online",
                                   style: TextStyle(
                                     color: successEmerald,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
+                                    fontSize: 10.8,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
@@ -3936,7 +5509,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         Text(
                           "NAVIGATION",
                           style: TextStyle(
-                            color: _sidebarText.withOpacity(0.5),
+                            color: _sidebarMuted,
                             fontSize: 10.5,
                             letterSpacing: 0.9,
                             fontWeight: FontWeight.w700,
@@ -3961,13 +5534,19 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           _selectedIndex == 2,
                           () => setState(() => _selectedIndex = 2),
                         ),
+                        _navItem(
+                          Icons.monitor_heart_rounded,
+                          "Operations",
+                          _selectedIndex == 3,
+                          () => setState(() => _selectedIndex = 3),
+                        ),
                         const SizedBox(height: 16),
-                        Divider(color: _sidebarText.withOpacity(0.10), height: 1),
+                        Divider(color: _sidebarBorder, height: 1),
                         const SizedBox(height: 14),
                         Text(
                           "QUICK ACTIONS",
                           style: TextStyle(
-                            color: _sidebarText.withOpacity(0.5),
+                            color: _sidebarMuted,
                             fontSize: 10.5,
                             letterSpacing: 0.9,
                             fontWeight: FontWeight.w700,
@@ -4030,7 +5609,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                backgroundColor: dangerRed.withOpacity(0.08),
+                backgroundColor: _sidebarSurface,
+                side: BorderSide(color: dangerRed.withValues(alpha: 0.28)),
               ),
             ),
           ),
@@ -4064,25 +5644,29 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             foregroundColor: Colors.white,
             elevation: 0,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            minimumSize: const Size(0, 42),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            minimumSize: const Size(0, 44),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
       );
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 2),
+      margin: const EdgeInsets.only(bottom: 4),
       child: ListTile(
         dense: true,
         visualDensity: const VisualDensity(vertical: -2),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        leading: Icon(icon, size: 16, color: _sidebarText.withOpacity(0.86)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(color: _sidebarBorder),
+        ),
+        tileColor: _sidebarSurface.withValues(alpha: 0.65),
+        leading: Icon(icon, size: 16, color: _sidebarText.withValues(alpha: 0.90)),
         title: Text(
           label,
           style: TextStyle(
-            color: _sidebarText.withOpacity(0.93),
+            color: _sidebarText.withValues(alpha: 0.95),
             fontSize: 12.8,
             fontWeight: FontWeight.w600,
           ),
@@ -4090,7 +5674,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         trailing: Icon(
           Icons.chevron_right_rounded,
           size: 16,
-          color: _sidebarText.withOpacity(0.45),
+          color: _sidebarMuted,
         ),
         onTap: onTap,
       ),
@@ -4104,32 +5688,32 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     VoidCallback onTap,
   ) {
     final iconColor = active
-        ? primaryBrandLight
-        : _sidebarText.withOpacity(_isDark ? 0.7 : 0.54);
+        ? primaryBrand
+        : _sidebarText.withValues(alpha: _isDark ? 0.74 : 0.62);
     return Container(
-      margin: const EdgeInsets.only(bottom: 4),
+      margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
         gradient: active
             ? LinearGradient(
                 colors: [
-                  primaryBrand.withOpacity(0.18),
-                  primaryBrand.withOpacity(0.03),
+                  primaryBrand.withValues(alpha: 0.22),
+                  primaryBrand.withValues(alpha: 0.10),
                 ],
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
               )
             : null,
         color: active ? null : Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: active ? primaryBrand.withOpacity(0.30) : Colors.transparent,
+          color: active ? primaryBrand.withValues(alpha: 0.55) : Colors.transparent,
         ),
       ),
       child: ListTile(
         dense: true,
         visualDensity: const VisualDensity(vertical: -1),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         leading: Icon(
           icon,
           color: iconColor,
@@ -4140,7 +5724,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
           style: TextStyle(
             color: active
                 ? _sidebarText
-                : _sidebarText.withOpacity(_isDark ? 0.7 : 0.54),
+                : _sidebarText.withValues(alpha: _isDark ? 0.74 : 0.62),
             fontWeight: active ? FontWeight.w800 : FontWeight.w600,
             fontSize: 13,
           ),

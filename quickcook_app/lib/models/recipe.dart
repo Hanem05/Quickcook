@@ -35,6 +35,22 @@ class Recipe {
     this.cookingTimeMinutes,
   });
 
+  /// Lightweight thumbnail URL for list/grid cards.
+  ///
+  /// TheMealDB supports a small preview image by appending `/preview` to its
+  /// image URLs. Cards should use this to avoid downloading many full-size JPGs
+  /// at once on Android emulator / low-end devices. Detail pages can still use
+  /// [imageUrl] for the full image.
+  String? get thumbnailUrl {
+    final url = imageUrl?.trim();
+    if (url == null || url.isEmpty) return null;
+    if (url.contains('themealdb.com/images/media/meals') &&
+        !url.endsWith('/preview')) {
+      return '$url/preview';
+    }
+    return url;
+  }
+
   factory Recipe.fromJson(Map<String, dynamic> json) {
     List<String> ingredientNames = [];
 

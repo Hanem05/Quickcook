@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import 'collection_detail_screen.dart';
@@ -29,6 +30,13 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
         _initialLoading = false;
         _hasError = false;
       });
+      // Preload first few collections so opening one feels instant.
+      for (final item in data.take(4)) {
+        final map = item as Map;
+        final id = int.tryParse(map['id']?.toString() ?? '');
+        if (id == null || id <= 0) continue;
+        unawaited(ApiService.getCollectionDetail(id));
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -220,12 +228,15 @@ class _CollectionsScreenState extends State<CollectionsScreen> {
       onTap: id <= 0
           ? null
           : () {
+              // Warm collection detail in background so next screen opens faster.
+              unawaited(ApiService.getCollectionDetail(id));
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => CollectionDetailScreen(
                     collectionId: id,
                     collectionName: name,
+                    initialData: ApiService.cachedCollectionDetail(id),
                   ),
                 ),
               );

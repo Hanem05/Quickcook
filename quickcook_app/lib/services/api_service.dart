@@ -1396,12 +1396,20 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> fetchApiUsagePaginated({
+    String? startDate,
+    String? endDate,
     int page = 1,
     int perPage = 10,
   }) async {
+    final q = <String>[
+      'page=$page',
+      'per_page=$perPage',
+    ];
+    if (startDate != null && startDate.isNotEmpty) q.add('start_date=$startDate');
+    if (endDate != null && endDate.isNotEmpty) q.add('end_date=$endDate');
     final response = await http
         .get(
-          Uri.parse('$baseUrl/admin/api-usage?page=$page&per_page=$perPage'),
+          Uri.parse('$baseUrl/admin/api-usage?${q.join('&')}'),
           headers: await _getHeaders(),
         )
         .timeout(_httpTimeout);
@@ -1576,6 +1584,7 @@ class ApiService {
   static Future<Map<String, dynamic>> askCookingAssistant({
     required String message,
     List<int>? ingredientIds,
+    List<Map<String, String>>? conversation,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/assistant/cook-help'),
@@ -1583,10 +1592,15 @@ class ApiService {
       body: jsonEncode({
         'message': message,
         if (ingredientIds != null) 'ingredient_ids': ingredientIds,
+        if (conversation != null && conversation.isNotEmpty) 'conversation': conversation,
       }),
     );
     if (response.statusCode != 200) {
-      throw Exception('Assistant is unavailable right now');
+      final serverMsg = _readErrorMessage(response.body);
+      throw Exception(
+        serverMsg ??
+            'Assistant unavailable (status ${response.statusCode}). Please login again if needed.',
+      );
     }
     final decoded = jsonDecode(response.body);
     return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
@@ -1760,6 +1774,13 @@ class ApiService {
       }
     }
     return _refreshCollectionDetailFromApi(id, throwOnError: true);
+  }
+
+  static Map<String, dynamic>? cachedCollectionDetail(int id) {
+    final key = 'collection_detail_$id';
+    final cached = _cache[key];
+    if (cached is Map<String, dynamic>) return cached;
+    return null;
   }
 
   static Future<Map<String, dynamic>> _refreshCollectionDetailFromApi(int id,

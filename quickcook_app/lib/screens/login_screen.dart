@@ -4,13 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
-import 'home_screen.dart';
+import 'main_landing_shell_screen.dart';
 import 'register_screen.dart';
 import 'admin_recipes_screen.dart';
 import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.postRegistrationMessage});
+
+  /// Shown once after a successful sign-up (user must sign in explicitly).
+  final String? postRegistrationMessage;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -23,6 +26,22 @@ class _LoginScreenState extends State<LoginScreen> {
   final passwordController = TextEditingController();
 
   bool isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final msg = widget.postRegistrationMessage?.trim();
+    if (msg != null && msg.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        AppMessage.show(
+          context,
+          text: msg,
+          type: AppMessageType.success,
+        );
+      });
+    }
+  }
 
   void login() async {
     if (!_formKey.currentState!.validate()) return;
@@ -66,7 +85,7 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          MaterialPageRoute(builder: (_) => const MainLandingShellScreen()),
         );
       }
     } else {
@@ -96,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
               height: 280,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: cs.primary.withOpacity(0.12),
+                color: cs.primary.withValues(alpha: 0.12),
               ),
             ),
           ),
@@ -108,7 +127,7 @@ class _LoginScreenState extends State<LoginScreen> {
               height: 260,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: cs.tertiary.withOpacity(0.10),
+                color: cs.tertiary.withValues(alpha: 0.10),
               ),
             ),
           ),
@@ -137,7 +156,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               borderRadius: BorderRadius.circular(16),
                               boxShadow: [
                                 BoxShadow(
-                                  color: cs.primary.withOpacity(0.35),
+                                  color: cs.primary.withValues(alpha: 0.35),
                                   blurRadius: 16,
                                   offset: const Offset(0, 8),
                                 ),
@@ -175,12 +194,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       Container(
                         padding: const EdgeInsets.fromLTRB(24, 24, 24, 22),
                         decoration: BoxDecoration(
-                          color: cs.surfaceContainerHigh.withOpacity(0.88),
+                          color: cs.surfaceContainerHigh.withValues(alpha: 0.88),
                           borderRadius: BorderRadius.circular(24),
                           border: Border.all(color: cs.outlineVariant),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(
+                              color: Colors.black.withValues(alpha:
                                 Theme.of(context).brightness == Brightness.dark
                                     ? 0.4
                                     : 0.08,
@@ -339,7 +358,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     boxShadow: [
                                       if (!isLoading)
                                         BoxShadow(
-                                          color: cs.primary.withOpacity(0.32),
+                                          color: cs.primary.withValues(alpha: 0.32),
                                           blurRadius: 16,
                                           offset: const Offset(0, 8),
                                         ),

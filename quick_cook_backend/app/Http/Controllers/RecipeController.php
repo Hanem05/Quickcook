@@ -12,8 +12,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class RecipeController extends Controller
 {
@@ -47,6 +49,87 @@ class RecipeController extends Controller
         Cache::increment('trending_cache_version');
         Cache::forget('recipes_all');
         Cache::forget('admin_stats');
+    }
+
+    protected function askGeminiAssistant(string $message, array $history, array $ingredientIds): ?array
+    {
+        $apiKey = (string) env('GEMINI_API_KEY', '');
+        if ($apiKey === '') {
+            return null;
+        }
+
+        $ingredientNames = [];
+        if ($ingredientIds !== []) {
+            $ingredientNames = Ingredient::query()
+                ->whereIn('id', $ingredientIds)
+                ->pluck('name')
+                ->map(static fn ($name): string => (string) $name)
+                ->values()
+                ->all();
+        }
+
+        $systemPrompt = implode("\n", [
+            'You are QuickCook AI, a helpful cooking and recipe assistant.',
+            'Use concise, friendly answers with practical steps.',
+            'When useful, format with markdown bullets.',
+            'Stay focused on recipes, ingredients, substitutions, cooking, and app-related guidance.',
+            'If asked for unsafe or unrelated content, politely refuse and redirect to cooking help.',
+        ]);
+
+        $contents = [
+            [
+                'role' => 'user',
+                'parts' => [['text' => $systemPrompt]],
+            ],
+        ];
+
+        foreach (array_slice($history, -10) as $item) {
+            $role = (($item['role'] ?? '') === 'assistant') ? 'model' : 'user';
+            $text = trim((string) ($item['content'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            $contents[] = [
+                'role' => $role,
+                'parts' => [['text' => $text]],
+            ];
+        }
+
+        $contextText = $ingredientNames === []
+            ? 'Selected ingredient context: none'
+            : 'Selected ingredient context: '.implode(', ', $ingredientNames);
+
+        $contents[] = [
+            'role' => 'user',
+            'parts' => [[
+                'text' => $contextText."\n\nUser message: ".$message,
+            ]],
+        ];
+
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='.$apiKey;
+
+        $res = Http::timeout(20)->post($url, [
+            'contents' => $contents,
+            'generationConfig' => [
+                'temperature' => 0.7,
+                'maxOutputTokens' => 700,
+            ],
+        ]);
+
+        if (! $res->successful()) {
+            return null;
+        }
+
+        $data = $res->json();
+        $text = trim((string) data_get($data, 'candidates.0.content.parts.0.text', ''));
+        if ($text === '') {
+            return null;
+        }
+
+        return [
+            'reply' => $text,
+            'suggestions' => [],
+        ];
     }
 
     /**
@@ -836,11 +919,73 @@ class RecipeController extends Controller
             'message' => 'required|string|max:500',
             'ingredient_ids' => 'nullable|array',
             'ingredient_ids.*' => 'integer|min:1',
+            'conversation' => 'nullable|array|max:20',
+            'conversation.*.role' => 'required_with:conversation|string|in:user,assistant',
+            'conversation.*.content' => 'required_with:conversation|string|max:1200',
         ]);
 
         $msgRaw = trim((string) $v['message']);
-        $msg = mb_strtolower($msgRaw);
+        $msg = Str::lower($msgRaw);
         $ingredientIds = collect($v['ingredient_ids'] ?? [])->map(static fn ($id): int => (int) $id)->filter()->unique()->values()->all();
+        $conversation = collect($v['conversation'] ?? [])
+            ->map(static fn ($item): array => [
+                'role' => (string) ($item['role'] ?? 'user'),
+                'content' => trim((string) ($item['content'] ?? '')),
+            ])
+            ->filter(static fn ($item): bool => $item['content'] !== '')
+            ->values()
+            ->all();
+        $msgContainsPantryContext = str_contains($msg, 'i have')
+            || str_contains($msg, 'available')
+            || str_contains($msg, 'in my pantry')
+            || str_contains($msg, 'with ');
+
+        $extractIngredientIdsFromMessage = static function (string $messageLower): array {
+            $clean = preg_replace('/[^a-z0-9\s]/i', ' ', $messageLower) ?? '';
+            $clean = preg_replace('/\s+/', ' ', trim($clean)) ?? '';
+            if ($clean === '') {
+                return [];
+            }
+
+            $tokens = collect(explode(' ', $clean))
+                ->map(static fn ($w): string => trim((string) $w))
+                ->filter(static fn ($w): bool => strlen($w) >= 3)
+                ->unique()
+                ->take(14)
+                ->values()
+                ->all();
+            if ($tokens === []) {
+                return [];
+            }
+
+            $rows = Ingredient::query()
+                ->select(['id', 'name'])
+                ->where(function ($q) use ($tokens) {
+                    foreach ($tokens as $token) {
+                        $q->orWhere('name', 'like', '%'.$token.'%');
+                    }
+                })
+                ->limit(120)
+                ->get();
+
+            return $rows
+                ->filter(static function ($row) use ($clean): bool {
+                    $name = Str::lower(trim((string) ($row->name ?? '')));
+                    if ($name === '' || strlen($name) < 3) {
+                        return false;
+                    }
+                    return str_contains($clean, $name);
+                })
+                ->map(static fn ($row): int => (int) $row->id)
+                ->filter(static fn ($id): bool => $id > 0)
+                ->unique()
+                ->values()
+                ->all();
+        };
+
+        if ($ingredientIds === []) {
+            $ingredientIds = $extractIngredientIdsFromMessage($msg);
+        }
 
         $response = [
             'reply' => 'I can help with recipes, ingredients, substitutions, cook-now matches, and app features.',
@@ -938,7 +1083,17 @@ class RecipeController extends Controller
             return response()->json($response);
         }
 
-        if (str_contains($msg, 'what can i cook') || str_contains($msg, 'cook now')) {
+        if (str_contains($msg, 'what can i cook') || str_contains($msg, 'cook now') || ($msgContainsPantryContext && $ingredientIds !== [])) {
+            if ($ingredientIds === []) {
+                $quickStarter = Recipe::query()
+                    ->whereNotNull('id')
+                    ->orderByDesc('id')
+                    ->limit(5)
+                    ->get(['id', 'name']);
+                $response['reply'] = 'Select ingredients first, then ask "what can I cook now?" for exact matches. For now, here are starter ideas.';
+                $response['suggestions'] = $formatRecipeSuggestions($quickStarter);
+                return response()->json($response);
+            }
             $matchRequest = new Request([
                 'ingredient_ids' => $ingredientIds,
                 'per_page' => 5,
@@ -968,9 +1123,144 @@ class RecipeController extends Controller
             return response()->json($response);
         }
 
+        if (str_contains($msg, 'how long') || str_contains($msg, 'how many minute') || str_contains($msg, 'minutes')) {
+            $recipeHint = '';
+            if (preg_match('/(?:for|of)\s+(.+)/iu', $msgRaw, $m) === 1) {
+                $recipeHint = trim((string) ($m[1] ?? ''));
+            }
+
+            if ($recipeHint !== '') {
+                $recipe = Recipe::query()
+                    ->where('name', 'like', '%'.$recipeHint.'%')
+                    ->first(['id', 'name', 'cooking_time']);
+                if ($recipe) {
+                    $mins = (int) ($recipe->cooking_time ?? 0);
+                    $response['reply'] = $mins > 0
+                        ? "{$recipe->name} usually takes about {$mins} minutes."
+                        : "I found {$recipe->name}, but cooking time is not set yet.";
+                    $response['suggestions'] = [['id' => (int) $recipe->id, 'name' => (string) $recipe->name]];
+                    return response()->json($response);
+                }
+            }
+
+            // Use recent assistant suggestions from conversation context.
+            $suggestedNames = [];
+            foreach (array_reverse($conversation) as $turn) {
+                if (($turn['role'] ?? '') !== 'assistant') {
+                    continue;
+                }
+                $content = (string) ($turn['content'] ?? '');
+                if (preg_match('/Suggested recipes:\s*(.+)$/imu', $content, $m) === 1) {
+                    $raw = trim((string) ($m[1] ?? ''));
+                    if ($raw !== '') {
+                        $suggestedNames = array_values(array_filter(array_map(static fn ($v): string => trim((string) $v), explode('|', $raw))));
+                        break;
+                    }
+                }
+            }
+
+            if ($suggestedNames !== []) {
+                $rows = Recipe::query()
+                    ->where(function ($q) use ($suggestedNames) {
+                        foreach ($suggestedNames as $name) {
+                            $q->orWhere('name', 'like', '%'.$name.'%');
+                        }
+                    })
+                    ->limit(5)
+                    ->get(['id', 'name', 'cooking_time']);
+
+                if ($rows->isNotEmpty()) {
+                    $lines = $rows->map(static function ($r): string {
+                        $mins = (int) ($r->cooking_time ?? 0);
+                        return $mins > 0 ? "- {$r->name}: {$mins} min" : "- {$r->name}: time not set";
+                    })->values()->all();
+                    $response['reply'] = "Here are the cooking times from the last suggested recipes:\n".implode("\n", $lines);
+                    $response['suggestions'] = $formatRecipeSuggestions($rows);
+                    return response()->json($response);
+                }
+            }
+
+            $response['reply'] = 'I can estimate minutes if you include a recipe name, for example: "how many minutes for adobo?"';
+            return response()->json($response);
+        }
+
         if (str_contains($msg, 'cook now mode') || str_contains($msg, 'pantry')) {
             $response['reply'] = 'Cook Now Mode shows recipes you can cook immediately with selected ingredients. Pantry matching highlights your best-fit recipes.';
             return response()->json($response);
+        }
+
+        if (
+            str_contains($msg, 'another recipe')
+            || str_contains($msg, 'another one')
+            || str_contains($msg, 'more recipe')
+            || str_contains($msg, 'give me another')
+            || str_contains($msg, 'more suggestions')
+        ) {
+            $excludeNames = [];
+            foreach (array_reverse($conversation) as $turn) {
+                if (($turn['role'] ?? '') !== 'assistant') {
+                    continue;
+                }
+                $content = (string) ($turn['content'] ?? '');
+                if (preg_match('/Suggested recipes:\s*(.+)$/imu', $content, $m) === 1) {
+                    $raw = trim((string) ($m[1] ?? ''));
+                    if ($raw !== '') {
+                        $excludeNames = array_values(array_filter(array_map(static fn ($v): string => trim((string) $v), explode('|', $raw))));
+                        break;
+                    }
+                }
+            }
+
+            if ($ingredientIds !== []) {
+                $matchRequest = new Request([
+                    'ingredient_ids' => $ingredientIds,
+                    'per_page' => 12,
+                ]);
+                $matchData = $this->match($matchRequest)->getData(true);
+                $recipes = collect($matchData['data'] ?? [])
+                    ->filter(static function ($r) use ($excludeNames): bool {
+                        $name = trim((string) ($r['name'] ?? ''));
+                        if ($name === '') {
+                            return false;
+                        }
+                        foreach ($excludeNames as $ex) {
+                            if ($ex !== '' && strcasecmp($name, $ex) === 0) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    })
+                    ->take(5)
+                    ->values()
+                    ->all();
+
+                if ($recipes !== []) {
+                    $response['reply'] = 'Sure, here are more recipes you can try.';
+                    $response['suggestions'] = array_map(static fn ($r) => [
+                        'id' => (int) ($r['id'] ?? 0),
+                        'name' => (string) ($r['name'] ?? 'Recipe'),
+                    ], $recipes);
+                    return response()->json($response);
+                }
+            }
+
+            $rows = Recipe::query()
+                ->where(function ($q) use ($excludeNames) {
+                    foreach ($excludeNames as $name) {
+                        if ($name !== '') {
+                            $q->where('name', 'not like', '%'.$name.'%');
+                        }
+                    }
+                })
+                ->inRandomOrder()
+                ->limit(5)
+                ->get(['id', 'name']);
+
+            if ($rows->isNotEmpty()) {
+                $response['reply'] = 'Sure, here are more recipe ideas.';
+                $response['suggestions'] = $formatRecipeSuggestions($rows);
+                return response()->json($response);
+            }
         }
 
         $nameMatches = Recipe::query()
@@ -983,6 +1273,12 @@ class RecipeController extends Controller
             return response()->json($response);
         }
 
+        $llm = $this->askGeminiAssistant($msgRaw, $conversation, $ingredientIds);
+        if ($llm !== null) {
+            return response()->json($llm);
+        }
+
+        $response['reply'] = 'I can still help. Try asking in this format: "what can I cook with garlic and egg", "ingredients of adobo", "substitute for milk", or "how many minutes for sinigang".';
         return response()->json($response);
     }
 

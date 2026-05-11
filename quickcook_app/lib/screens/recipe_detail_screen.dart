@@ -34,13 +34,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   bool _isCreatingCollection = false;
 
   // --- MODERN TEAL & ZINC PALETTE ---
-  static const Color primaryBrand = Color(0xFF0D9488);
-  static const Color darkSlate = Color(0xFF18181B);
-  static const Color bgSoft = Color(0xFFF4F4F5);
-  static const Color surfaceWhite = Color(0xFFFFFFFF);
-  static const Color borderLight = Color(0xFFE4E4E7);
-  static const Color textMain = Color(0xFF27272A);
-  static const Color textMuted = Color(0xFF71717A);
+  static const Color primaryBrand = Color(0xFFC2410C);
   static const Color warningAmber = Color(0xFFF59E0B);
 
   @override
@@ -181,7 +175,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                     height: 18,
                     width: 180,
                     decoration: BoxDecoration(
-                      color: cs.surfaceContainerHigh.withOpacity(0.85),
+                      color: cs.surfaceContainerHigh.withValues(alpha: 0.85),
                       borderRadius: BorderRadius.circular(6),
                     ),
                   ),
@@ -211,6 +205,31 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     return Scaffold(
       backgroundColor: cs.surface,
       extendBodyBehindAppBar: true,
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          decoration: BoxDecoration(
+            color: cs.surface,
+            border: Border(top: BorderSide(color: cs.outlineVariant)),
+          ),
+          child: SizedBox(
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: () => _showCollectionModal(),
+              icon: const Icon(Icons.bookmark_rounded),
+              label: const Text("Save to Collection"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryBrand,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -218,10 +237,10 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
           padding: const EdgeInsets.all(8.0),
           child: Container(
             decoration: BoxDecoration(
-              color: cs.surfaceContainerHigh.withOpacity(0.9),
+              color: cs.surfaceContainerHigh.withValues(alpha: 0.9),
               shape: BoxShape.circle,
               boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8),
+                BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 8),
               ],
             ),
             child: IconButton(
@@ -274,31 +293,21 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                               height: 1.1,
                             ),
                           ),
+                          const SizedBox(height: 16),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              if (recipe!.difficulty != null)
+                                _factChip(Icons.speed_rounded, recipe!.difficulty!.toUpperCase()),
+                              if (recipe!.cookingTimeMinutes != null)
+                                _factChip(Icons.timer_outlined, '${recipe!.cookingTimeMinutes} min'),
+                              if (recipe!.category != null)
+                                _factChip(Icons.category_rounded, recipe!.category!),
+                            ],
+                          ),
                           const SizedBox(height: 32),
                           _buildRatingCard(),
-                          const SizedBox(height: 20),
-                          SizedBox(
-                            width: double.infinity,
-                            child: Semantics(
-                              button: true,
-                              label: 'Save recipe to collection',
-                              child: ElevatedButton.icon(
-                                onPressed: () => _showCollectionModal(),
-                                icon: const Icon(Icons.bookmark_rounded),
-                                label: const Text("Save to Collection"),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primaryBrand,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 14,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                ),
-                              ),
-                            )
-                          ),
                           const SizedBox(height: 40),
                           _buildSectionHeader("Ingredients"),
                           const SizedBox(height: 20),
@@ -342,8 +351,14 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
               fadeInDuration: const Duration(milliseconds: 220),
               fadeOutDuration: const Duration(milliseconds: 120),
               memCacheWidth: 1080,
-              placeholder: (context, url) => const Center(
-                child: CircularProgressIndicator(color: primaryBrand),
+              placeholder: (context, url) => Container(
+                color: cs.surfaceContainerLow,
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.restaurant_menu_rounded,
+                  size: 64,
+                  color: cs.onSurfaceVariant,
+                ),
               ),
               errorWidget: (context, url, error) => Icon(
                 Icons.restaurant_menu_rounded,
@@ -416,7 +431,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                   const SizedBox(height: 6),
                   Text(
                     [
-                      if (diff != null) diff,
+                      if (diff case final value) value,
                       if (mins != null) '~$mins min',
                     ].join(' · '),
                     style: TextStyle(
@@ -450,7 +465,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: primaryBrand.withOpacity(0.1),
+              color: primaryBrand.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
@@ -523,7 +538,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                       isFilled ? Icons.star_rounded : Icons.star_outline_rounded,
                       color: isFilled
                           ? warningAmber
-                          : cs.onSurfaceVariant.withOpacity(0.35),
+                          : cs.onSurfaceVariant.withValues(alpha: 0.35),
                       size: 42,
                     ),
                   ),
@@ -606,6 +621,33 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     );
   }
 
+  Widget _factChip(IconData icon, String label) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: cs.outlineVariant),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: cs.primary),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: cs.onSurface,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showCollectionModal() async {
     try {
       List collections = await ApiService.getCollections();
@@ -652,7 +694,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                               c['id'],
                               widget.recipeId,
                             );
-                            if (!mounted) return;
+                            if (!context.mounted) return;
                             Navigator.pop(context);
                             _showSnackBar(
                               duplicate
@@ -708,7 +750,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                               widget.recipeId,
                             );
 
-                            if (!mounted) return;
+                            if (!context.mounted) return;
                             Navigator.pop(context);
                             _showSnackBar(
                               duplicate ? "Collection created. Recipe already saved." : "Created and saved!",

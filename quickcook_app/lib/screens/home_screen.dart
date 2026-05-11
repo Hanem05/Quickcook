@@ -19,6 +19,7 @@ import 'recipe_screen.dart';
 import 'favorites_screen.dart';
 import 'recipe_detail_screen.dart';
 import 'profile_screen.dart';
+import 'chat_assistant_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -498,18 +499,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openAssistantChat() async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => FractionallySizedBox(
-        heightFactor: 0.9,
-        child: _AssistantChatScreen(
-          selectedIngredientIds: selectedIngredients.toList(),
-          onOpenRecipe: navigateToDetail,
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatAssistantScreen(
+          initialIngredientIds: selectedIngredients.toList(),
         ),
       ),
     );
@@ -564,6 +558,18 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const ProfileScreen()),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.auto_awesome_rounded, color: cs.onSurface),
+            tooltip: 'Assistant',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ChatAssistantScreen(
+                  initialIngredientIds: selectedIngredients.toList(),
+                ),
+              ),
             ),
           ),
           IconButton(
@@ -745,7 +751,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Icon(
         Icons.restaurant_menu_rounded,
         size: 32,
-        color: cs.onSurfaceVariant.withOpacity(0.55),
+        color: cs.onSurfaceVariant.withValues(alpha: 0.55),
       ),
     );
   }
@@ -769,11 +775,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final ctx = context;
     if (!ctx.mounted) return;
     for (final r in list.take(8)) {
-      final url = r.imageUrl;
+      final url = r.thumbnailUrl;
       if (url == null || url.trim().isEmpty) continue;
       try {
         await precacheImage(
-          CachedNetworkImageProvider(url, maxWidth: 480),
+          CachedNetworkImageProvider(url, maxWidth: 320),
           ctx,
         );
       } catch (_) {/* ignore single-image precache failures */}
@@ -817,15 +823,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(20),
                       ),
-                      child: (recipe.imageUrl != null &&
-                              recipe.imageUrl!.trim().isNotEmpty)
+                      child: (recipe.thumbnailUrl != null &&
+                              recipe.thumbnailUrl!.trim().isNotEmpty)
                           ? CachedNetworkImage(
-                              imageUrl: recipe.imageUrl!,
+                              imageUrl: recipe.thumbnailUrl!,
                               fit: BoxFit.cover,
                               width: double.infinity,
-                              fadeInDuration: const Duration(milliseconds: 220),
-                              fadeOutDuration: const Duration(milliseconds: 120),
-                              memCacheWidth: 480,
+                              fadeInDuration: const Duration(milliseconds: 160),
+                              fadeOutDuration: const Duration(milliseconds: 80),
+                              memCacheWidth: 320,
                               placeholder: (context, url) =>
                                   _imageLoadingPlaceholder(cs),
                               errorWidget: (context, url, error) =>
@@ -865,7 +871,7 @@ class _HomeScreenState extends State<HomeScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 16),
-        _buildSectionHeader("Recommended For You"),
+        _buildSectionHeader("Quick Picks For You"),
         const SizedBox(height: 16),
         SizedBox(
             height: 232,
@@ -889,7 +895,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         if (!isLoadingFeed && trendingRecipes.isNotEmpty) ...[
           const SizedBox(height: 10),
-          _buildSectionHeader("Trending"),
+          _buildSectionHeader("Popular Right Now"),
           const SizedBox(height: 12),
           SizedBox(
             height: 232,
@@ -910,6 +916,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildHomeHero() {
     final cs = Theme.of(context).colorScheme;
+    final topKeywords = suggestedKeywords.take(6).toList();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Container(
@@ -918,8 +925,8 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              cs.primary.withOpacity(0.18),
-              cs.tertiary.withOpacity(0.13),
+              cs.primary.withValues(alpha: 0.18),
+              cs.tertiary.withValues(alpha: 0.13),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -928,7 +935,7 @@ class _HomeScreenState extends State<HomeScreen> {
           border: Border.all(color: cs.outlineVariant),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(
+              color: Colors.black.withValues(alpha:
                 Theme.of(context).brightness == Brightness.dark ? 0.28 : 0.05,
               ),
               blurRadius: 16,
@@ -941,10 +948,29 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Row(
               children: [
+                Icon(Icons.location_on_rounded, color: cs.primary, size: 18),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    "Delivering inspiration to your kitchen",
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: cs.surface.withOpacity(0.9),
+                    color: cs.surface.withValues(alpha: 0.9),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: cs.outlineVariant),
                   ),
@@ -991,6 +1017,27 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
+            if (topKeywords.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 34,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: topKeywords.length,
+                  separatorBuilder: (_, index) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final keyword = topKeywords[index];
+                    return ActionChip(
+                      label: Text(keyword),
+                      onPressed: () {
+                        searchController.text = keyword;
+                        performGlobalSearch(keyword);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1002,7 +1049,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: cs.surface.withOpacity(0.86),
+        color: cs.surface.withValues(alpha: 0.86),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: cs.outlineVariant),
       ),
@@ -1054,7 +1101,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: cs.primary.withOpacity(0.14),
+                      color: cs.primary.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(Icons.notifications_active_outlined, color: cs.primary, size: 18),
@@ -1119,7 +1166,7 @@ class _HomeScreenState extends State<HomeScreen> {
           border: Border.all(color: cs.outlineVariant),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(Theme.of(context).brightness == Brightness.dark ? 0.3 : 0.04),
+              color: Colors.black.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.3 : 0.04),
               blurRadius: 12,
               offset: const Offset(0, 6),
             ),
@@ -1133,15 +1180,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(20),
                 ),
-                child: (recipe.imageUrl != null &&
-                        recipe.imageUrl!.trim().isNotEmpty)
+                child: (recipe.thumbnailUrl != null &&
+                        recipe.thumbnailUrl!.trim().isNotEmpty)
                     ? CachedNetworkImage(
-                        imageUrl: recipe.imageUrl!,
+                        imageUrl: recipe.thumbnailUrl!,
                         fit: BoxFit.cover,
                         width: double.infinity,
-                        fadeInDuration: const Duration(milliseconds: 220),
-                        fadeOutDuration: const Duration(milliseconds: 120),
-                        memCacheWidth: 480,
+                        fadeInDuration: const Duration(milliseconds: 160),
+                        fadeOutDuration: const Duration(milliseconds: 80),
+                        memCacheWidth: 320,
                         placeholder: (context, url) =>
                             _imageLoadingPlaceholder(cs),
                         errorWidget: (context, url, error) =>
@@ -1206,8 +1253,8 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
-                  cs.primary.withOpacity(0.16),
-                  cs.tertiary.withOpacity(0.12),
+                  cs.primary.withValues(alpha: 0.16),
+                  cs.tertiary.withValues(alpha: 0.12),
                 ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -1216,7 +1263,7 @@ class _HomeScreenState extends State<HomeScreen> {
               border: Border.all(color: cs.outlineVariant),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(
+                  color: Colors.black.withValues(alpha:
                     Theme.of(context).brightness == Brightness.dark ? 0.26 : 0.05,
                   ),
                   blurRadius: 18,
@@ -1227,6 +1274,17 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _miniBadge(cs, Icons.rice_bowl_rounded, 'Asian'),
+                    _miniBadge(cs, Icons.lunch_dining_rounded, 'Fast Meals'),
+                    _miniBadge(cs, Icons.icecream_rounded, 'Dessert'),
+                    _miniBadge(cs, Icons.breakfast_dining_rounded, 'Breakfast'),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
@@ -1245,7 +1303,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       tooltip: 'Open AI Assistant',
                       icon: Icon(Icons.smart_toy_outlined, color: cs.primary),
                       style: IconButton.styleFrom(
-                        backgroundColor: cs.surface.withOpacity(0.85),
+                        backgroundColor: cs.surface.withValues(alpha: 0.85),
                         side: BorderSide(color: cs.outlineVariant),
                         padding: const EdgeInsets.all(10),
                       ),
@@ -1286,7 +1344,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: cs.primary.withOpacity(0.16),
+                      color: cs.primary.withValues(alpha: 0.16),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
@@ -1737,7 +1795,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 boxShadow: [
                   if (!(selectedIngredients.isEmpty || isLoadingRecipes))
                     BoxShadow(
-                      color: cs.primary.withOpacity(0.35),
+                      color: cs.primary.withValues(alpha: 0.35),
                       blurRadius: 18,
                       offset: const Offset(0, 8),
                     ),
@@ -1793,7 +1851,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: cs.surface.withOpacity(0.72),
+        color: cs.surface.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: cs.outlineVariant),
       ),
@@ -1816,240 +1874,3 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class _AssistantChatScreen extends StatefulWidget {
-  final List<int> selectedIngredientIds;
-  final Future<void> Function(int recipeId) onOpenRecipe;
-
-  const _AssistantChatScreen({
-    required this.selectedIngredientIds,
-    required this.onOpenRecipe,
-  });
-
-  @override
-  State<_AssistantChatScreen> createState() => _AssistantChatScreenState();
-}
-
-class _AssistantChatScreenState extends State<_AssistantChatScreen> {
-  final TextEditingController _controller = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  final List<Map<String, dynamic>> _messages = [];
-  bool _typing = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _messages.add({
-      'role': 'bot',
-      'text':
-          'Hi! I am your QuickCook assistant. Ask me about recipes, ingredients, substitutions, cook-now, and app features.',
-      'suggestions': const <Map<String, dynamic>>[],
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent + 80,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
-    });
-  }
-
-  Future<void> _sendMessage() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty || _typing) return;
-    _controller.clear();
-    setState(() {
-      _messages.add({
-        'role': 'user',
-        'text': text,
-        'suggestions': const <Map<String, dynamic>>[],
-      });
-      _typing = true;
-    });
-    _scrollToBottom();
-
-    try {
-      final res = await ApiService.askCookingAssistant(
-        message: text,
-        ingredientIds: widget.selectedIngredientIds,
-      );
-      final reply = (res['reply']?.toString() ?? 'I am still learning that one.').trim();
-      final rawSuggestions = res['suggestions'];
-      List<Map<String, dynamic>> suggestions = const [];
-      if (rawSuggestions is List) {
-        suggestions = rawSuggestions
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .where((m) => (m['id']?.toString().isNotEmpty ?? false))
-            .toList();
-      }
-      if (!mounted) return;
-      setState(() {
-        _messages.add({
-          'role': 'bot',
-          'text': reply.isEmpty ? 'I am still learning that one.' : reply,
-          'suggestions': suggestions,
-        });
-        _typing = false;
-      });
-      _scrollToBottom();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _messages.add({
-          'role': 'bot',
-          'text': 'Sorry, I cannot answer that right now. Please try again.',
-          'suggestions': const <Map<String, dynamic>>[],
-        });
-        _typing = false;
-      });
-      _scrollToBottom();
-      debugPrint('assistant chat: $e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('AI Cooking Assistant'),
-        backgroundColor: cs.surface,
-        foregroundColor: cs.onSurface,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-      ),
-      backgroundColor: cs.surface,
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              itemCount: _messages.length + (_typing ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (_typing && index == _messages.length) {
-                  return Align(
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: cs.surfaceContainerHigh,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        'Assistant is typing...',
-                        style: TextStyle(color: cs.onSurfaceVariant),
-                      ),
-                    ),
-                  );
-                }
-                final m = _messages[index];
-                final isUser = m['role'] == 'user';
-                final suggestions = (m['suggestions'] as List?) ?? const [];
-                return Column(
-                  crossAxisAlignment:
-                      isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                  children: [
-                    Align(
-                      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        constraints: const BoxConstraints(maxWidth: 320),
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: isUser ? cs.primary : cs.surfaceContainerHigh,
-                          borderRadius: BorderRadius.circular(14),
-                          border: isUser
-                              ? null
-                              : Border.all(color: cs.outlineVariant),
-                        ),
-                        child: Text(
-                          m['text']?.toString() ?? '',
-                          style: TextStyle(
-                            color: isUser ? cs.onPrimary : cs.onSurface,
-                            fontWeight: FontWeight.w500,
-                            height: 1.35,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (!isUser && suggestions.isNotEmpty)
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: suggestions.map((s) {
-                          final id = int.tryParse(s['id']?.toString() ?? '') ?? 0;
-                          final name = s['name']?.toString() ?? 'Recipe';
-                          return ActionChip(
-                            label: Text(name),
-                            backgroundColor: cs.surfaceContainerHigh,
-                            side: BorderSide(color: cs.outlineVariant),
-                            onPressed: id <= 0
-                                ? null
-                                : () async {
-                                    await widget.onOpenRecipe(id);
-                                    if (!mounted) return;
-                                    Navigator.pop(context);
-                                  },
-                          );
-                        }).toList(),
-                      ),
-                    const SizedBox(height: 8),
-                  ],
-                );
-              },
-            ),
-          ),
-          SafeArea(
-            top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              decoration: BoxDecoration(
-                color: cs.surface,
-                border: Border(top: BorderSide(color: cs.outlineVariant)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      onSubmitted: (_) => _sendMessage(),
-                      minLines: 1,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        hintText: 'Ask about recipes, ingredients, substitutions...',
-                        filled: true,
-                        fillColor: cs.surfaceContainerHigh,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(color: cs.outlineVariant),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filledTonal(
-                    onPressed: _typing ? null : _sendMessage,
-                    icon: const Icon(Icons.send_rounded),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

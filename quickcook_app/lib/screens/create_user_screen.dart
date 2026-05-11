@@ -17,14 +17,6 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
   String selectedRole = 'user';
   bool isLoading = false;
 
-  static const Color primaryBrand = Color(0xFF0D9488);
-  static const Color darkSlate = Color(0xFF18181B);
-  static const Color bgSoft = Color(0xFFF4F4F5);
-  static const Color surfaceWhite = Color(0xFFFFFFFF);
-  static const Color borderLight = Color(0xFFE4E4E7);
-  static const Color textMain = Color(0xFF27272A);
-  static const Color textMuted = Color(0xFF71717A);
-
   Future<void> handleCreateUser() async {
     if (nameController.text.isEmpty ||
         emailController.text.isEmpty ||
@@ -59,15 +51,19 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
+    final cs = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
         width: 400,
-        backgroundColor: isError ? Colors.redAccent : darkSlate,
+        backgroundColor: isError ? cs.error : cs.inverseSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         content: Text(
           message,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: isError ? cs.onError : cs.onInverseSurface,
+          ),
         ),
       ),
     );
@@ -75,23 +71,24 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: bgSoft,
+      backgroundColor: cs.surface,
       appBar: AppBar(
-        backgroundColor: surfaceWhite,
+        backgroundColor: cs.surface,
         elevation: 0,
         centerTitle: false,
-        title: const Text(
+        title: Text(
           "User Management / New Account",
           style: TextStyle(
-            color: textMain,
+            color: cs.onSurface,
             fontWeight: FontWeight.w800,
             fontSize: 18,
           ),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(color: borderLight, height: 1),
+          child: Container(color: cs.outlineVariant, height: 1),
         ),
       ),
       body: Center(
@@ -107,9 +104,9 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                   margin: const EdgeInsets.only(bottom: 14),
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                   decoration: BoxDecoration(
-                    color: surfaceWhite,
+                    color: cs.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: borderLight),
+                    border: Border.all(color: cs.outlineVariant),
                   ),
                   child: Row(
                     children: [
@@ -117,29 +114,28 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: primaryBrand.withOpacity(0.12),
+                          color: cs.primary.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.person_add_alt_1_rounded, color: primaryBrand),
+                        child: Icon(Icons.person_add_alt_1_rounded, color: cs.primary),
                       ),
                       const SizedBox(width: 12),
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
+                            const Text(
                               "Create Account",
                               style: TextStyle(
-                                color: textMain,
                                 fontWeight: FontWeight.w900,
                                 fontSize: 17,
                               ),
                             ),
-                            SizedBox(height: 2),
+                            const SizedBox(height: 2),
                             Text(
                               "Set credentials and access role for a new user.",
                               style: TextStyle(
-                                color: textMuted,
+                                color: cs.onSurfaceVariant,
                                 fontWeight: FontWeight.w500,
                                 fontSize: 12.5,
                               ),
@@ -153,12 +149,12 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                 Container(
                   padding: const EdgeInsets.all(28),
                   decoration: BoxDecoration(
-                    color: surfaceWhite,
+                    color: cs.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: borderLight),
+                    border: Border.all(color: cs.outlineVariant),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.03),
+                        color: Colors.black.withValues(alpha: 0.03),
                         blurRadius: 24,
                         offset: const Offset(0, 8),
                       ),
@@ -173,16 +169,16 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                             width: 4,
                             height: 20,
                             decoration: BoxDecoration(
-                              color: primaryBrand,
+                              color: cs.primary,
                               borderRadius: BorderRadius.circular(4),
                             ),
                           ),
                           const SizedBox(width: 16),
-                          const Text("Account Credentials",
+                          Text("Account Credentials",
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w900,
-                                color: textMain,
+                                color: cs.onSurface,
                               )),
                         ],
                       ),
@@ -211,21 +207,21 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      const Text(
+                      Text(
                         "System Role",
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 13,
-                          color: textMuted,
+                          color: cs.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: 12),
 
                       DropdownButtonFormField<String>(
                         value: selectedRole,
-                        dropdownColor: surfaceWhite,
-                        style: const TextStyle(
-                          color: textMain,
+                        dropdownColor: cs.surfaceContainerHigh,
+                        style: TextStyle(
+                          color: cs.onSurface,
                           fontWeight: FontWeight.w700,
                           fontSize: 14,
                         ),
@@ -254,7 +250,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                         child: ElevatedButton(
                           onPressed: isLoading ? null : handleCreateUser,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: primaryBrand,
+                            backgroundColor: cs.primary,
                             foregroundColor: Colors.white,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
@@ -305,7 +301,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
           style: const TextStyle(
             fontWeight: FontWeight.w800,
             fontSize: 13,
-            color: textMuted,
+            color: Colors.grey,
           ),
         ),
         const SizedBox(height: 8),
@@ -317,9 +313,9 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r'[\x20-\x7E]')),
           ],
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: textMain,
+            color: Theme.of(context).colorScheme.onSurface,
             fontSize: 14,
           ),
           decoration: _inputDecoration(icon, "Enter $label"),
@@ -329,13 +325,14 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
   }
 
   InputDecoration _inputDecoration(IconData icon, String hint) {
+    final cs = Theme.of(context).colorScheme;
     return InputDecoration(
-      prefixIcon: Icon(icon, color: textMuted, size: 20),
+      prefixIcon: Icon(icon, color: cs.onSurfaceVariant, size: 20),
       filled: true,
-      fillColor: bgSoft,
+      fillColor: cs.surfaceContainer,
       hintText: hint,
-      hintStyle: const TextStyle(
-        color: textMuted,
+      hintStyle: TextStyle(
+        color: cs.onSurfaceVariant,
         fontWeight: FontWeight.w500,
         fontSize: 13,
       ),
@@ -345,7 +342,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: primaryBrand, width: 1.5),
+        borderSide: BorderSide(color: cs.primary, width: 1.5),
       ),
     );
   }
