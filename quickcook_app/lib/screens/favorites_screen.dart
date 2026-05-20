@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-
 import '../models/recipe.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../widgets/recipe_image.dart';
 import 'recipe_detail_screen.dart';
 
 class FavoritesScreen extends StatefulWidget {
@@ -290,33 +289,14 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(23),
               ),
-              child: recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
-                  ? CachedNetworkImage(
-                      imageUrl: recipe.imageUrl!,
-                      height: 200,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      fadeInDuration: const Duration(milliseconds: 220),
-                      fadeOutDuration: const Duration(milliseconds: 120),
-                      memCacheWidth: 600,
-                      placeholder: (context, url) => Container(
-                        color: cs.surfaceContainerLow,
-                        height: 200,
-                        child: const Center(
-                          child: CircularProgressIndicator(color: primaryBrand),
-                        ),
-                      ),
-                    )
-                  : Container(
-                      height: 200,
-                      width: double.infinity,
-                      color: cs.surfaceContainerLow,
-                      child: Icon(
-                        Icons.restaurant_menu_rounded,
-                        size: 64,
-                        color: cs.onSurfaceVariant,
-                      ),
-                    ),
+              child: RecipeImage(
+                recipeId: recipe.id,
+                imageUrl: recipe.imageUrl,
+                height: 200,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                memCacheWidth: 600,
+              ),
             ),
 
             // --- INFO PADDING ---
@@ -445,7 +425,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
   Widget _buildFavoriteGridCard(Recipe recipe) {
     final cs = Theme.of(context).colorScheme;
-    final thumbnailUrl = recipe.thumbnailUrl;
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
@@ -475,44 +454,13 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               flex: 5,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
-                child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
-                    ? CachedNetworkImage(
-                        imageUrl: thumbnailUrl,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        fadeInDuration: const Duration(milliseconds: 160),
-                        fadeOutDuration: const Duration(milliseconds: 80),
-                        memCacheWidth: 320,
-                        placeholder: (context, url) => Container(
-                          color: cs.surfaceContainerLow,
-                          child: Center(
-                            child: SizedBox(
-                              height: 22,
-                              width: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.2,
-                                color: cs.primary,
-                              ),
-                            ),
-                          ),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          color: cs.surfaceContainerLow,
-                          child: Icon(
-                            Icons.restaurant_menu_rounded,
-                            size: 42,
-                            color: cs.onSurfaceVariant,
-                          ),
-                        ),
-                      )
-                    : Container(
-                        color: cs.surfaceContainerLow,
-                        child: Icon(
-                          Icons.restaurant_menu_rounded,
-                          size: 42,
-                          color: cs.onSurfaceVariant,
-                        ),
-                      ),
+                child: RecipeImage(
+                  recipeId: recipe.id,
+                  imageUrl: recipe.imageUrl,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  memCacheWidth: 320,
+                ),
               ),
             ),
             Expanded(

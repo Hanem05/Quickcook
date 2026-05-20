@@ -363,7 +363,7 @@ class ApiService {
     }
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final List data = json["data"] ?? [];
-    final recipes = data.map<Recipe>((e) => Recipe.fromJson(e)).toList();
+    final recipes = data.map<Recipe>((e) => recipeFromApiJson(e)).toList();
     int? pageNum(dynamic v) {
       if (v == null) return null;
       if (v is int) return v;
@@ -458,7 +458,7 @@ class ApiService {
           .timeout(_httpTimeout);
       if (response.statusCode == 200) {
         await OfflineCacheService.saveRecipeDetailJson(id, response.body);
-        final result = Recipe.fromJson(jsonDecode(response.body));
+        final result = recipeFromApiJson(jsonDecode(response.body));
         _cache[key] = result;
         return result;
       }
@@ -489,7 +489,7 @@ class ApiService {
         try {
           final List data = jsonDecode(raw);
           final result =
-              data.map((e) => Recipe.fromJson(e['recipe'])).toList();
+              data.map((e) => recipeFromFavoriteEntry(e)).toList();
           _cache['favorites'] = result;
           unawaited(_refreshFavoritesFromApi());
           return result;
@@ -508,7 +508,7 @@ class ApiService {
       if (response.statusCode == 200) {
         await OfflineCacheService.saveFavoritesJson(response.body);
         final List data = jsonDecode(response.body);
-        final result = data.map((e) => Recipe.fromJson(e['recipe'])).toList();
+        final result = data.map((e) => recipeFromFavoriteEntry(e)).toList();
         _cache['favorites'] = result;
         return result;
       }
@@ -633,19 +633,30 @@ class ApiService {
     return cached is List<Recipe> ? cached : null;
   }
 
+  /// Normalizes API image paths and fixes localhost URLs for mobile clients.
+  static Recipe recipeFromApiJson(dynamic raw) {
+    final map = Map<String, dynamic>.from(raw as Map);
+    final img = map['image_url'] ?? map['image'];
+    final resolved = RecipeImageResolver.networkUrl(img?.toString());
+    if (resolved != null) {
+      map['image_url'] = resolved;
+      map['image'] = resolved;
+    }
+    return Recipe.fromJson(map);
+  }
+
+  static Recipe recipeFromFavoriteEntry(dynamic raw) {
+    final map = Map<String, dynamic>.from(raw as Map);
+    if (map['recipe'] is Map) {
+      return recipeFromApiJson(map['recipe']);
+    }
+    return recipeFromApiJson(map);
+  }
+
   static List<Recipe> _parseRecipeListResponse(String body) {
     final decoded = jsonDecode(body);
     List data = decoded is Map ? (decoded['data'] ?? []) : decoded;
-    return data.map((e) {
-      final map = Map<String, dynamic>.from(e as Map);
-      final raw = map['image_url'] ?? map['image'];
-      final resolved = RecipeImageResolver.networkUrl(raw?.toString());
-      if (resolved != null) {
-        map['image_url'] = resolved;
-        map['image'] = resolved;
-      }
-      return Recipe.fromJson(map);
-    }).toList();
+    return data.map((e) => recipeFromApiJson(e)).toList();
   }
 
   static Future<List<Recipe>> fetchRecipes({bool forceRefresh = false}) async {
@@ -790,7 +801,7 @@ class ApiService {
     }
     final decoded = jsonDecode(response.body);
     final List data = decoded is Map ? (decoded['data'] ?? []) : decoded;
-    return data.map((e) => Recipe.fromJson(e)).toList();
+    return data.map((e) => recipeFromApiJson(e)).toList();
   }
 
   /// Admin-only fetch: retrieves all recipes with full fields (including
@@ -814,11 +825,11 @@ class ApiService {
       final decoded = jsonDecode(response.body);
       if (decoded is Map<String, dynamic>) {
         final List data = (decoded['data'] as List?) ?? const [];
-        all.addAll(data.map((e) => Recipe.fromJson(e)));
+        all.addAll(data.map((e) => recipeFromApiJson(e)));
         final lp = int.tryParse(decoded['last_page']?.toString() ?? '');
         lastPage = (lp == null || lp < 1) ? page : lp;
       } else if (decoded is List) {
-        all.addAll(decoded.map((e) => Recipe.fromJson(e)));
+        all.addAll(decoded.map((e) => recipeFromApiJson(e)));
         lastPage = page;
       } else {
         lastPage = page;
@@ -904,7 +915,7 @@ class ApiService {
     if (decoded is Map<String, dynamic>) {
       final list = (decoded['data'] as List?) ?? const [];
       return <String, dynamic>{
-        'items': list.map((e) => Recipe.fromJson(Map<String, dynamic>.from(e))).toList(),
+        'items': list.map((e) => recipeFromApiJson(e)).toList(),
         'current_page':
             int.tryParse(decoded['current_page']?.toString() ?? '') ?? page,
         'last_page': int.tryParse(decoded['last_page']?.toString() ?? '') ?? 1,
@@ -913,7 +924,7 @@ class ApiService {
     }
     if (decoded is List) {
       return <String, dynamic>{
-        'items': decoded.map((e) => Recipe.fromJson(Map<String, dynamic>.from(e))).toList(),
+        'items': decoded.map((e) => recipeFromApiJson(e)).toList(),
         'current_page': page,
         'last_page': page,
         'total': decoded.length,
@@ -1142,7 +1153,7 @@ class ApiService {
         if (response.statusCode == 200) {
           final decoded = jsonDecode(response.body);
           List data = decoded is Map ? (decoded['data'] ?? []) : decoded;
-          final result = data.map((e) => Recipe.fromJson(e)).toList();
+          final result = data.map((e) => recipeFromApiJson(e)).toList();
           _cache['recommendations'] = result;
           return result;
         }

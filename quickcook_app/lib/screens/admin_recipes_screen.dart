@@ -13,6 +13,7 @@ import 'recipes_form_screen.dart';
 import 'create_user_screen.dart';
 import 'login_screen.dart';
 import '../models/admin_stats.dart';
+import '../widgets/recipe_image.dart';
 
 class AdminRecipesScreen extends StatefulWidget {
   const AdminRecipesScreen({super.key});
@@ -1734,8 +1735,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 rows: visibleRecipes.map((r) {
                   final categoryStr = r.category ?? 'Uncategorized';
                   final ratingsStr = r.rating?.toString() ?? 'No Rating';
-                  final imageUrlStr = r.imageUrl ?? '';
-
                   return DataRow(
                     cells: [
                       DataCell(
@@ -1759,26 +1758,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 border: Border.all(color: _panelBorder),
                               ),
                               clipBehavior: Clip.antiAlias,
-                              child: imageUrlStr.isNotEmpty
-                                  ? CachedNetworkImage(
-                                      imageUrl: imageUrlStr,
-                                      fit: BoxFit.cover,
-                                      memCacheWidth: 96,
-                                      placeholder: (context, url) => Container(
-                                        color: _pageBg,
-                                      ),
-                                      errorWidget: (context, url, error) =>
-                                          Icon(
-                                        Icons.restaurant,
-                                        color: _mutedText,
-                                        size: 20,
-                                      ),
-                                    )
-                                  : Icon(
-                                      Icons.restaurant,
-                                      color: _mutedText,
-                                      size: 20,
-                                    ),
+                              child: RecipeImage(
+                                recipeId: r.id,
+                                imageUrl: r.imageUrl,
+                                fit: BoxFit.cover,
+                                width: recipeThumbSize,
+                                height: recipeThumbSize,
+                                memCacheWidth: 96,
+                              ),
                             ),
                             const SizedBox(width: 16),
                             SizedBox(
