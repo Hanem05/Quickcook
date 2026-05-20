@@ -76,7 +76,9 @@ class Recipe {
       instructions:
           json['instructions']?.toString() ?? 'No instructions provided.',
       ingredients: ingredientNames,
-      imageUrl: json['image']?.toString() ?? json['image_url']?.toString(),
+      // Prefer backend-resolved absolute URL; raw `image` may be a relative
+      // storage path like `recipes/foo.jpg` which won't load directly.
+      imageUrl: json['image_url']?.toString() ?? json['image']?.toString(),
       category: json['category']?.toString(),
       rating: json['average_rating'] != null
           ? double.tryParse(json['average_rating'].toString())

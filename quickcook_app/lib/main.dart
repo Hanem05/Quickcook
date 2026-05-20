@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'navigation/app_route_observer.dart';
 import 'screens/login_screen.dart';
+import 'services/api_host_config.dart';
 import 'services/api_service.dart';
 import 'services/app_logger.dart';
 import 'services/notification_service.dart';
@@ -14,6 +15,7 @@ import 'theme/theme_notifier.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await ApiHostConfig.init();
   if (kDebugMode) {
     debugPrint('QuickCook API base URL: ${ApiService.baseUrl}');
   }

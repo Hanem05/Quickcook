@@ -1,9 +1,12 @@
 import 'dart:async';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../navigation/app_page_route.dart';
+import '../services/api_host_config.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../widgets/modern_ui.dart';
 import 'main_landing_shell_screen.dart';
 import 'register_screen.dart';
 import 'admin_recipes_screen.dart';
@@ -12,7 +15,6 @@ import 'forgot_password_screen.dart';
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, this.postRegistrationMessage});
 
-  /// Shown once after a successful sign-up (user must sign in explicitly).
   final String? postRegistrationMessage;
 
   @override
@@ -21,34 +23,52 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
-
-  bool isLoading = false;
+  final serverHostController = TextEditingController();
+  bool _showServerField = false;
 
   @override
   void initState() {
     super.initState();
+    _initServerField();
     final msg = widget.postRegistrationMessage?.trim();
     if (msg != null && msg.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        AppMessage.show(
-          context,
-          text: msg,
-          type: AppMessageType.success,
-        );
+        AppMessage.show(context, text: msg, type: AppMessageType.success);
       });
     }
   }
 
-  void login() async {
+  Future<void> _initServerField() async {
+    final saved = await ApiHostConfig.loadSavedHost();
+    if (!mounted) return;
+    setState(() {
+      if (saved != null && saved.isNotEmpty) {
+        serverHostController.text = saved;
+      }
+      _showServerField = !kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.android &&
+          (ApiHostConfig.requiresManualHost || kDebugMode);
+    });
+  }
+
+  Future<void> login() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => isLoading = true);
+    final host = serverHostController.text.trim();
+    if (host.isNotEmpty) {
+      await ApiHostConfig.saveHost(host);
+    } else if (ApiHostConfig.requiresManualHost) {
+      AppMessage.show(
+        context,
+        text: 'Enter your computer\'s Wi‑Fi IP (same network as this phone).',
+        type: AppMessageType.error,
+      );
+      return;
+    }
 
-    // Pre-warm public endpoints in parallel with login so home renders instantly.
     unawaited(ApiService.fetchIngredients());
     unawaited(ApiService.fetchRecipes());
 
@@ -58,34 +78,30 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     if (!mounted) return;
-    setState(() => isLoading = false);
 
-    // 🌿 CHECK IF LOGIN WAS SUCCESSFUL
     if (result["success"] == true) {
       final data = result["data"];
       final role =
           data["role"] ?? (data["user"] != null ? data["user"]["role"] : null);
 
-      // Pre-warm authenticated endpoints in background; data will be cached
-      // by the time HomeScreen reads it.
       if (role != "admin") {
         unawaited(ApiService.fetchRecommendedRecipes());
         unawaited(ApiService.fetchFavoriteIds());
         unawaited(ApiService.fetchFavorite());
         unawaited(ApiService.getCollections());
       }
-      // Profile screen reads from this cache when opened.
       unawaited(ApiService.getUserProfile());
 
       if (role == "admin") {
+        unawaited(ApiService.fetchRecipes());
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const AdminRecipesScreen()),
+          AppPageRoute.smooth(const AdminRecipesScreen()),
         );
       } else {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const MainLandingShellScreen()),
+          AppPageRoute.smooth(const MainLandingShellScreen()),
         );
       }
     } else {
@@ -97,6 +113,14 @@ class _LoginScreenState extends State<LoginScreen> {
         type: AppMessageType.error,
       );
     }
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    serverHostController.dispose();
+    super.dispose();
   }
 
   @override
@@ -138,8 +162,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 430),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -150,8 +172,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [cs.primary, cs.secondary],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
                               ),
                               borderRadius: BorderRadius.circular(16),
                               boxShadow: [
@@ -190,25 +210,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 28),
-
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(24, 24, 24, 22),
-                        decoration: BoxDecoration(
-                          color: cs.surfaceContainerHigh.withValues(alpha: 0.88),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: cs.outlineVariant),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha:
-                                Theme.of(context).brightness == Brightness.dark
-                                    ? 0.4
-                                    : 0.08,
-                              ),
-                              blurRadius: 26,
-                              offset: const Offset(0, 12),
-                            ),
-                          ],
-                        ),
+                      ModernSurface(
                         child: Form(
                           key: _formKey,
                           child: Column(
@@ -219,113 +221,102 @@ class _LoginScreenState extends State<LoginScreen> {
                                 style: TextStyle(
                                   fontSize: 26,
                                   fontWeight: FontWeight.w900,
-                                  letterSpacing: -0.4,
                                   color: cs.onSurface,
                                 ),
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                "Sign in to continue to your smart kitchen",
+                                "Sign in to your smart kitchen",
                                 style: TextStyle(
                                   color: cs.onSurfaceVariant,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
                               const SizedBox(height: 24),
-
-                              Semantics(
-                                label: 'Email address input',
-                                textField: true,
-                                child: TextFormField(
-                                  controller: emailController,
-                                  style: TextStyle(
-                                    color: cs.onSurface,
-                                    fontWeight: FontWeight.w600,
+                              TextFormField(
+                                controller: emailController,
+                                keyboardType: TextInputType.emailAddress,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                    RegExp(r'[\x20-\x7E]'),
                                   ),
-                                  keyboardType: TextInputType.emailAddress,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                      RegExp(r'[\x20-\x7E]'),
-                                    ),
-                                  ],
-                                  decoration: InputDecoration(
-                                    hintText: "Email Address",
-                                    filled: true,
-                                    fillColor: cs.surfaceContainerLow,
-                                    prefixIcon: Icon(
-                                      Icons.email_outlined,
-                                      color: cs.onSurfaceVariant,
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                  ),
-                                  validator: (value) {
-                                    if (value == null || value.isEmpty) {
-                                      return "Email is required";
-                                    }
-                                    if (!value.contains("@")) {
-                                      return "Please enter a valid email";
-                                    }
-                                    return null;
-                                  },
+                                ],
+                                decoration: const InputDecoration(
+                                  hintText: "Email Address",
+                                  prefixIcon: Icon(Icons.email_outlined),
                                 ),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return "Email is required";
+                                  }
+                                  if (!value.contains("@")) {
+                                    return "Enter a valid email";
+                                  }
+                                  return null;
+                                },
                               ),
-
                               const SizedBox(height: 14),
-
-                              Semantics(
-                                label: 'Password input',
-                                textField: true,
-                                child: TextFormField(
-                                  controller: passwordController,
-                                  obscureText: true,
-                                  style: TextStyle(
-                                    color: cs.onSurface,
-                                    fontWeight: FontWeight.w600,
+                              TextFormField(
+                                controller: passwordController,
+                                obscureText: true,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                    RegExp(r'[\x20-\x7E]'),
                                   ),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                      RegExp(r'[\x20-\x7E]'),
-                                    ),
-                                  ],
+                                ],
+                                decoration: const InputDecoration(
+                                  hintText: "Password",
+                                  prefixIcon: Icon(Icons.lock_outline_rounded),
+                                ),
+                                onFieldSubmitted: (_) => login(),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return "Password is required";
+                                  }
+                                  if (value.length < 6) {
+                                    return "Minimum 6 characters";
+                                  }
+                                  return null;
+                                },
+                              ),
+                              if (_showServerField) ...[
+                                const SizedBox(height: 14),
+                                TextFormField(
+                                  controller: serverHostController,
+                                  keyboardType: TextInputType.number,
                                   decoration: InputDecoration(
-                                    hintText: "Password",
-                                    filled: true,
-                                    fillColor: cs.surfaceContainerLow,
+                                    hintText: "Server host (PC IP on Wi‑Fi)",
+                                    helperText:
+                                        "Emulator: leave blank. Phone: e.g. 192.168.1.10",
+                                    helperMaxLines: 2,
                                     prefixIcon: Icon(
-                                      Icons.lock_outline_rounded,
+                                      Icons.dns_outlined,
                                       color: cs.onSurfaceVariant,
                                     ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                      borderSide: BorderSide.none,
-                                    ),
                                   ),
-                                  onFieldSubmitted: (_) => login(),
-                                  validator: (value) {
-                                    if (value == null || value.isEmpty) {
-                                      return "Password is required";
-                                    }
-                                    if (value.length < 6) {
-                                      return "Minimum 6 characters";
-                                    }
-                                    return null;
-                                  },
                                 ),
-                              ),
-
+                              ] else if (!kIsWeb &&
+                                  defaultTargetPlatform == TargetPlatform.android) ...[
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: () =>
+                                        setState(() => _showServerField = true),
+                                    icon: const Icon(Icons.settings_ethernet_rounded, size: 18),
+                                    label: const Text("Set server host"),
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 8),
-
                               Align(
                                 alignment: Alignment.centerRight,
                                 child: TextButton(
                                   onPressed: () {
                                     Navigator.push(
                                       context,
-                                      MaterialPageRoute(
-                                        builder: (_) => const ForgotPasswordScreen(),
+                                      AppPageRoute.smooth(
+                                        const ForgotPasswordScreen(),
                                       ),
                                     );
                                   },
@@ -335,101 +326,32 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                               ),
-
                               const SizedBox(height: 10),
-
-                              SizedBox(
-                                width: double.infinity,
-                                height: 56,
-                                child: Semantics(
-                                  button: true,
-                                  label: 'Sign in',
-                                  child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(16),
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        cs.primary,
-                                        cs.secondary,
-                                      ],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    boxShadow: [
-                                      if (!isLoading)
-                                        BoxShadow(
-                                          color: cs.primary.withValues(alpha: 0.32),
-                                          blurRadius: 16,
-                                          offset: const Offset(0, 8),
-                                        ),
-                                    ],
-                                  ),
-                                    child: ElevatedButton(
-                                      onPressed: isLoading ? null : login,
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.transparent,
-                                        shadowColor: Colors.transparent,
-                                        foregroundColor: cs.onPrimary,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(16),
-                                        ),
-                                        elevation: 0,
-                                      ),
-                                      child: isLoading
-                                          ? SizedBox(
-                                              height: 24,
-                                              width: 24,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2.5,
-                                                color: cs.onPrimary,
-                                              ),
-                                            )
-                                          : Text(
-                                              "Sign In",
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w800,
-                                                fontSize: 16,
-                                                letterSpacing: 0.4,
-                                                color: cs.onPrimary,
-                                              ),
-                                            ),
-                                    ),
-                                  ),
-                                ),
+                              ModernPrimaryButton(
+                                label: "Sign In",
+                                icon: Icons.arrow_forward_rounded,
+                                onPressed: login,
                               ),
                             ],
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 20),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
                             "Don't have an account?",
-                            style: TextStyle(
-                              color: cs.onSurfaceVariant,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                            ),
+                            style: TextStyle(color: cs.onSurfaceVariant),
                           ),
                           TextButton(
                             onPressed: () => Navigator.push(
                               context,
-                              MaterialPageRoute(
-                                builder: (_) => const RegisterScreen(),
-                              ),
-                            ),
-                            style: TextButton.styleFrom(
-                              foregroundColor: cs.primary,
+                              AppPageRoute.smooth(const RegisterScreen()),
                             ),
                             child: const Text(
                               "Sign Up",
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 15,
-                              ),
+                              style: TextStyle(fontWeight: FontWeight.w800),
                             ),
                           ),
                         ],

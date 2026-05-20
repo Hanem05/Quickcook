@@ -11,6 +11,7 @@ import '../models/admin_stats.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 
+import 'api_host_config.dart';
 import 'connectivity_service.dart';
 import 'offline_cache_service.dart';
 import 'performance_reporter.dart';
@@ -67,36 +68,11 @@ class ApiService {
     } catch (_) {}
     return null;
   }
-  /// Production: `flutter build apk --dart-define=API_BASE_URL=https://your-host/api`
-  ///
-  /// Dev overrides:
-  /// - Full URL: `--dart-define=API_BASE_URL=http://192.168.1.10:8001/api`
-  /// - Host + port (emulator default host is 10.0.2.2 → your PC):
-  ///   `flutter run --dart-define=API_HOST=192.168.1.10` (physical phone on same Wi‑Fi)
-  /// - Port override: `--dart-define=API_PORT=8001`
-  static final String baseUrl = _resolveBaseUrl();
-
-  static String _resolveBaseUrl() {
-    const override = String.fromEnvironment('API_BASE_URL', defaultValue: '');
-    if (override.isNotEmpty) return override;
-
-    const hostOverride = String.fromEnvironment('API_HOST', defaultValue: '');
-    const portOverride = String.fromEnvironment('API_PORT', defaultValue: '8001');
-    final port = portOverride.trim().isEmpty ? '8001' : portOverride.trim();
-
-    final String host;
-    if (hostOverride.trim().isNotEmpty) {
-      host = hostOverride.trim();
-    } else if (kIsWeb) {
-      host = '127.0.0.1';
-    } else if (defaultTargetPlatform == TargetPlatform.android) {
-      // Android emulator: 10.0.2.2 maps to the host machine (Docker on :8001).
-      host = '10.0.2.2';
-    } else {
-      host = '127.0.0.1';
-    }
-
-    return 'http://$host:$port/api';
+  /// See [ApiHostConfig] — emulator uses 10.0.0.2; physical phone uses saved Wi‑Fi IP.
+  static String get baseUrl {
+    final url = ApiHostConfig.current;
+    if (url.isNotEmpty) return url;
+    return 'http://127.0.0.1:8001/api';
   }
 
   static Future<String?> getToken() async {
@@ -166,7 +142,13 @@ class ApiService {
       }
     } catch (e) {
       await AppLogger.logApiError(endpoint: 'POST /login', error: e);
-      return {"success": false, "message": "Cannot connect to server."};
+      final hint = ApiHostConfig.requiresManualHost
+          ? ' Enter your PC\'s Wi‑Fi IP under Server host (e.g. 192.168.1.10).'
+          : '';
+      return {
+        "success": false,
+        "message": "Cannot connect to server.$hint",
+      };
     }
   }
 
@@ -776,12 +758,138 @@ class ApiService {
     return data.map((e) => Recipe.fromJson(e)).toList();
   }
 
+  /// Admin-only fetch: retrieves all recipes with full fields (including
+  /// instructions), bypassing compact/offline browse cache.
+  static Future<List<Recipe>> fetchAllRecipesForAdmin() async {
+    const perPage = 200;
+    var page = 1;
+    var lastPage = 1;
+    final all = <Recipe>[];
+
+    do {
+      final params = <String, String>{
+        'page': '$page',
+        'per_page': '$perPage',
+      };
+      final uri = Uri.parse('$baseUrl/recipes').replace(queryParameters: params);
+      final response = await http.get(uri, headers: await _getHeaders());
+      if (response.statusCode != 200) {
+        throw Exception(_readErrorMessage(response.body) ?? 'Failed to load admin recipes');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final List data = (decoded['data'] as List?) ?? const [];
+        all.addAll(data.map((e) => Recipe.fromJson(e)));
+        final lp = int.tryParse(decoded['last_page']?.toString() ?? '');
+        lastPage = (lp == null || lp < 1) ? page : lp;
+      } else if (decoded is List) {
+        all.addAll(decoded.map((e) => Recipe.fromJson(e)));
+        lastPage = page;
+      } else {
+        lastPage = page;
+      }
+      page++;
+    } while (page <= lastPage);
+
+    return all;
+  }
+
   static Future<List<dynamic>> fetchUsers({bool forceRefresh = false}) async {
     if (!forceRefresh && _cache['users_list'] is List) {
       unawaited(_refreshUsersList());
       return _cache['users_list'] as List;
     }
     return _refreshUsersList(throwOnError: true);
+  }
+
+  static Future<Map<String, dynamic>> fetchUsersPaginated({
+    int page = 1,
+    int perPage = 20,
+    String query = '',
+    String searchMode = 'all', // all|first|last
+  }) async {
+    final params = <String, String>{
+      'page': '$page',
+      'per_page': '$perPage',
+      if (query.trim().isNotEmpty) 'q': query.trim(),
+      if (searchMode != 'all') 'search_mode': searchMode,
+    };
+    final uri = Uri.parse('$baseUrl/users').replace(queryParameters: params);
+    final response = await http
+        .get(uri, headers: await _getHeaders())
+        .timeout(_httpTimeout);
+    if (response.statusCode != 200) {
+      throw Exception(_readErrorMessage(response.body) ?? 'Failed to load users');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      final list = (decoded['data'] as List?) ?? const [];
+      return <String, dynamic>{
+        'items': List<dynamic>.from(list),
+        'current_page':
+            int.tryParse(decoded['current_page']?.toString() ?? '') ?? page,
+        'last_page': int.tryParse(decoded['last_page']?.toString() ?? '') ?? 1,
+        'total': int.tryParse(decoded['total']?.toString() ?? '') ?? list.length,
+      };
+    }
+    if (decoded is List) {
+      return <String, dynamic>{
+        'items': List<dynamic>.from(decoded),
+        'current_page': page,
+        'last_page': page,
+        'total': decoded.length,
+      };
+    }
+    return <String, dynamic>{
+      'items': const <dynamic>[],
+      'current_page': page,
+      'last_page': 1,
+      'total': 0,
+    };
+  }
+
+  static Future<Map<String, dynamic>> fetchAdminRecipesPaginated({
+    int page = 1,
+    int perPage = 20,
+    String query = '',
+  }) async {
+    final params = <String, String>{
+      'page': '$page',
+      'per_page': '$perPage',
+      if (query.trim().isNotEmpty) 'q': query.trim(),
+    };
+    final uri = Uri.parse('$baseUrl/recipes').replace(queryParameters: params);
+    final response = await http
+        .get(uri, headers: await _getHeaders())
+        .timeout(_httpTimeout);
+    if (response.statusCode != 200) {
+      throw Exception(_readErrorMessage(response.body) ?? 'Failed to load recipes');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      final list = (decoded['data'] as List?) ?? const [];
+      return <String, dynamic>{
+        'items': list.map((e) => Recipe.fromJson(Map<String, dynamic>.from(e))).toList(),
+        'current_page':
+            int.tryParse(decoded['current_page']?.toString() ?? '') ?? page,
+        'last_page': int.tryParse(decoded['last_page']?.toString() ?? '') ?? 1,
+        'total': int.tryParse(decoded['total']?.toString() ?? '') ?? list.length,
+      };
+    }
+    if (decoded is List) {
+      return <String, dynamic>{
+        'items': decoded.map((e) => Recipe.fromJson(Map<String, dynamic>.from(e))).toList(),
+        'current_page': page,
+        'last_page': page,
+        'total': decoded.length,
+      };
+    }
+    return <String, dynamic>{
+      'items': const <Recipe>[],
+      'current_page': page,
+      'last_page': 1,
+      'total': 0,
+    };
   }
 
   static Future<List<dynamic>> _refreshUsersList(
@@ -988,23 +1096,30 @@ class ApiService {
 
     debugPrint("CACHE MISS: recommendations");
     _recommendationsInFlight = () async {
-      final response = await http
-          .get(
-            Uri.parse("$baseUrl/recommended-recipes"),
-            headers: await _getHeaders(),
-          )
-          .timeout(_httpTimeout);
+      try {
+        final response = await http
+            .get(
+              Uri.parse("$baseUrl/recommended-recipes"),
+              headers: await _getHeaders(),
+            )
+            .timeout(_httpTimeout);
 
-      if (response.statusCode == 200) {
-        final decoded = jsonDecode(response.body);
-        List data = decoded is Map ? (decoded['data'] ?? []) : decoded;
-
-        final result = data.map((e) => Recipe.fromJson(e)).toList();
-        _cache['recommendations'] = result;
-        return result;
+        if (response.statusCode == 200) {
+          final decoded = jsonDecode(response.body);
+          List data = decoded is Map ? (decoded['data'] ?? []) : decoded;
+          final result = data.map((e) => Recipe.fromJson(e)).toList();
+          _cache['recommendations'] = result;
+          return result;
+        }
+      } catch (_) {
+        // Fall through to fast fallback.
       }
 
-      throw Exception("Failed to load recommendations");
+      // Fast fallback: use already-optimized recipes endpoint instead of failing home.
+      final quick = await fetchRecipes();
+      final fallback = quick.take(15).toList(growable: false);
+      _cache['recommendations'] = fallback;
+      return fallback;
     }();
     try {
       return await _recommendationsInFlight!;
@@ -1857,8 +1972,7 @@ class ApiService {
 
   static Future<void> warmStartupData() async {
     try {
-      // Keep startup warm-up lightweight and non-blocking for first paint.
-      await fetchIngredients();
+      await Future.wait([fetchIngredients(), fetchRecipes()]);
     } catch (_) {}
   }
 }

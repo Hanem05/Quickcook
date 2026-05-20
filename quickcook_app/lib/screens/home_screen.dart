@@ -29,7 +29,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const int _homeFeedRenderLimit = 40;
+  // Keep the initial list lighter on emulators/low-end devices.
+  static const int _homeFeedRenderLimit = 24;
   // --- CORE STATE ---
   List<Ingredient> allIngredients = [];
   List<Ingredient> filteredIngredients = [];
@@ -83,16 +84,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _bootstrapHome() async {
     // Render home quickly first; fetch only essential data on first paint.
-    // Heavier sections (personalized feed, search assist, smart signals) are
-    // deferred until after the user has seen the screen.
+    // Heavier sections are staggered to avoid startup jank on Android emulator.
     unawaited(loadRecent());
     unawaited(loadRecommendations());
     unawaited(loadIngredients());
-    Future.delayed(const Duration(milliseconds: 800), () {
+    Future.delayed(const Duration(milliseconds: 1200), () async {
       if (!mounted) return;
-      unawaited(loadPersonalizedFeed());
-      unawaited(loadSearchAssist());
-      unawaited(loadSprint9Signals());
+      // Load feed first, then lower-priority endpoints.
+      await loadPersonalizedFeed();
+      if (!mounted) return;
+      await Future.delayed(const Duration(milliseconds: 450));
+      if (!mounted) return;
+      await loadSearchAssist();
+      if (!mounted) return;
+      await Future.delayed(const Duration(milliseconds: 450));
+      if (!mounted) return;
+      await loadSprint9Signals();
     });
   }
 
@@ -115,6 +122,9 @@ class _HomeScreenState extends State<HomeScreen> {
         final first = notes.first;
         final title = first['title']?.toString() ?? 'QuickCook update';
         final body = first['body']?.toString() ?? '';
+        // Defer notification prompt slightly to avoid fighting initial frame.
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (!mounted) return;
         await NotificationService.maybeShowSmartMessage(
           title: title,
           body: body,
@@ -1813,9 +1823,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: isLoadingRecipes
-                    ? CircularProgressIndicator(color: cs.onPrimary)
-                    : Row(
+                child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
@@ -1827,7 +1835,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            selectedIngredients.isEmpty
+                            isLoadingRecipes
+                                ? "Finding recipes…"
+                                : selectedIngredients.isEmpty
                                 ? "Select ingredients"
                                 : "Find Recipes (${selectedIngredients.length})",
                             style: TextStyle(

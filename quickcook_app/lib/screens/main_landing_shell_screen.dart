@@ -27,6 +27,7 @@ class _MainLandingShellScreenState extends State<MainLandingShellScreen> {
         children: _tabs,
       ),
       bottomNavigationBar: NavigationBar(
+        animationDuration: const Duration(milliseconds: 280),
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
           setState(() => _currentIndex = index);

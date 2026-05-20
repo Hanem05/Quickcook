@@ -15,7 +15,6 @@ class FavoritesScreen extends StatefulWidget {
 
 class _FavoritesScreenState extends State<FavoritesScreen> {
   List<Recipe> favorites = [];
-  bool isLoading = false;
   bool _hasFetched = false;
 
   // --- MODERN TEAL & ZINC PALETTE ---
@@ -35,21 +34,14 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   }
 
   Future<void> loadFavorites({bool force = false}) async {
-    // Show the spinner ONLY when we have nothing on screen yet.
-    if (favorites.isEmpty && !_hasFetched) {
-      setState(() => isLoading = true);
-    }
     try {
       final data = await ApiService.fetchFavorite(forceRefresh: force);
       if (!mounted) return;
       setState(() {
         favorites = data;
-        isLoading = false;
         _hasFetched = true;
       });
-    } catch (e) {
-      if (mounted) setState(() => isLoading = false);
-    }
+    } catch (_) {}
   }
 
   Future<void> removeFavorite(int recipeId) async {
@@ -104,12 +96,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             ), // 🌿 Web Responsiveness
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
-              child: isLoading
-                  ? Center(
-                      key: const ValueKey('loading'),
-                      child: CircularProgressIndicator(color: cs.primary),
-                    )
-                  : favorites.isEmpty
+              child: favorites.isEmpty
                   ? Container(
                       key: const ValueKey('empty'),
                       alignment: Alignment.center,

@@ -20,7 +20,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
-  bool isLoading = false;
   bool _hasFetched = false;
   bool isSaving = false;
 
@@ -51,12 +50,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (emailController.text != (userData['email'] ?? '')) {
           emailController.text = userData['email'] ?? '';
         }
-        isLoading = false;
         _hasFetched = true;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => isLoading = false);
       // Only complain if there really is no data to show.
       if (nameController.text.isEmpty) {
         _showSnackBar("Failed to load profile", isError: true);

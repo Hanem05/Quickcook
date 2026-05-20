@@ -32,6 +32,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   bool loading = true;
   int? userRating;
   bool _isCreatingCollection = false;
+  bool _isFavorite = false;
+  bool _favoriteBusy = false;
 
   // --- MODERN TEAL & ZINC PALETTE ---
   static const Color primaryBrand = Color(0xFFC2410C);
@@ -51,7 +53,45 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       userRating = preview.userRating;
       loading = false;
     }
+    unawaited(_loadFavoriteState());
     loadRecipe();
+  }
+
+  Future<void> _loadFavoriteState() async {
+    try {
+      final ids = await ApiService.fetchFavoriteIds();
+      if (!mounted) return;
+      setState(() => _isFavorite = ids.contains(widget.recipeId));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isFavorite = false);
+    }
+  }
+
+  Future<void> _toggleFavorite() async {
+    if (_favoriteBusy) return;
+    setState(() => _favoriteBusy = true);
+    try {
+      if (_isFavorite) {
+        await ApiService.removeFavorite(widget.recipeId);
+        if (!mounted) return;
+        setState(() => _isFavorite = false);
+        _showSnackBar('Removed from favorites');
+      } else {
+        await ApiService.addToFavorites(widget.recipeId);
+        if (!mounted) return;
+        setState(() => _isFavorite = true);
+        _showSnackBar('Added to favorites');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar(
+        e.toString().replaceFirst('Exception: ', ''),
+        isError: true,
+      );
+    } finally {
+      if (mounted) setState(() => _favoriteBusy = false);
+    }
   }
 
   /// Persists IDs + a JSON snapshot so Home can show "Jump Back In" even if the API fails (e.g. web/CORS/offline).
@@ -100,6 +140,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         userRating = data.userRating ?? userRating;
         loading = false;
       });
+      unawaited(_loadFavoriteState());
       unawaited(ApiService.logActivity("view_recipe", widget.recipeId));
       await _persistRecentSnapshot(data);
     } catch (e) {
@@ -213,20 +254,66 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
             color: cs.surface,
             border: Border(top: BorderSide(color: cs.outlineVariant)),
           ),
-          child: SizedBox(
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: () => _showCollectionModal(),
-              icon: const Icon(Icons.bookmark_rounded),
-              label: const Text("Save to Collection"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryBrand,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showCollectionModal(),
+                  icon: const Icon(Icons.bookmark_rounded),
+                  label: const Text("Save to Collection"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryBrand,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton.icon(
+                  onPressed: _favoriteBusy ? null : _toggleFavorite,
+                  icon: _favoriteBusy
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _isFavorite ? primaryBrand : cs.primary,
+                          ),
+                        )
+                      : Icon(
+                          _isFavorite
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: _isFavorite ? primaryBrand : cs.primary,
+                        ),
+                  label: Text(
+                    _isFavorite ? 'Saved to favorites' : 'Add to favorites',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: _isFavorite ? primaryBrand : cs.onSurface,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: _isFavorite
+                          ? primaryBrand.withValues(alpha: 0.45)
+                          : cs.outlineVariant,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -324,7 +411,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                               fontWeight: FontWeight.w500,
                             ),
                           ),
-                          const SizedBox(height: 60),
+                          const SizedBox(height: 140),
                         ],
                       ),
                     ),

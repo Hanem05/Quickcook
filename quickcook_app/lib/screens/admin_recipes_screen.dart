@@ -46,7 +46,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   Map<String, dynamic>? activityStats;
   int totalUsers = 0;
   int totalRecipes = 0;
-  bool loading = false;
   bool _hasFetched = false;
 
   int _activityPage = 1;
@@ -74,6 +73,10 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   static const int _recipesRowsPerPage = 20;
   int _usersPage = 0;
   int _recipesPage = 0;
+  int _usersLastPage = 1;
+  int _recipesLastPage = 1;
+  Timer? _userSearchDebounce;
+  Timer? _recipeSearchDebounce;
 
   // --- NAVIGATION & SEARCH STATE ---
   // Start admins directly in the full recipe library for faster moderation.
@@ -112,7 +115,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   Color get _sidebarMuted =>
       _isDark ? Colors.white.withValues(alpha: 0.56) : Colors.white.withValues(alpha: 0.66);
   Color get _panelShadowColor =>
-      _isDark ? Colors.black.withOpacity(0.35) : Colors.black.withOpacity(0.03);
+      _isDark ? Colors.black.withValues(alpha: 0.35) : Colors.black.withValues(alpha: 0.03);
   Color get _brandSoft => primaryBrand.withValues(alpha: _isDark ? 0.20 : 0.10);
   Color get _brandStroke =>
       primaryBrand.withValues(alpha: _isDark ? 0.36 : 0.26);
@@ -130,6 +133,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   @override
   void dispose() {
+    _userSearchDebounce?.cancel();
+    _recipeSearchDebounce?.cancel();
     userSearchController.dispose();
     recipeSearchController.dispose();
     _errorTypeController.dispose();
@@ -144,43 +149,23 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   /// screen yet. Recipes/users still load independently so a failure on one
   /// does not blank the other.
   Future<void> loadData() async {
-    final hasAnythingOnScreen = recipes.isNotEmpty || users.isNotEmpty;
-    if (!hasAnythingOnScreen && !_hasFetched) {
-      setState(() => loading = true);
-    }
-
-    List<Recipe> recipeData = recipes;
-    List<dynamic> userData = users;
     bool recipesOk = false;
     bool usersOk = false;
-
-    final recipesFuture = ApiService.fetchRecipes();
-    final usersFuture = ApiService.fetchUsers();
     try {
-      recipeData = await recipesFuture;
+      await Future.wait([
+        _loadRecipesPage(resetToFirstPage: true, silent: true),
+        _loadUsersPage(resetToFirstPage: true, silent: true),
+      ]);
       recipesOk = true;
-    } catch (e) {
-      debugPrint('Admin load recipes: $e');
-    }
-    try {
-      userData = await usersFuture;
       usersOk = true;
     } catch (e) {
-      debugPrint('Admin load users: $e');
+      debugPrint('Admin load data: $e');
     }
 
     if (!mounted) return;
-    setState(() {
-      recipes = recipeData;
-      users = userData;
-      totalRecipes = recipeData.length;
-      totalUsers = userData.length;
-      loading = false;
-      _hasFetched = true;
-    });
+    setState(() => _hasFetched = true);
     _loadAnalyticsInBackground();
 
-    // Only complain if we have NOTHING usable on screen.
     if (!recipesOk && !usersOk && recipes.isEmpty && users.isEmpty && mounted) {
       _showSnackBar("System Sync Failed", isError: true);
     }
@@ -191,19 +176,10 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     bool showToast = false,
   }) async {
     try {
-      final results = await Future.wait<dynamic>([
-        ApiService.fetchRecipes(forceRefresh: true),
-        ApiService.fetchUsers(forceRefresh: true),
+      await Future.wait([
+        _loadRecipesPage(resetToFirstPage: true, silent: true),
+        _loadUsersPage(resetToFirstPage: true, silent: true),
       ]);
-      if (!mounted) return;
-      final recipeData = (results[0] as List<Recipe>);
-      final userData = (results[1] as List<dynamic>);
-      setState(() {
-        recipes = recipeData;
-        users = userData;
-        totalRecipes = recipeData.length;
-        totalUsers = userData.length;
-      });
       if (includeAnalytics) {
         unawaited(_loadAnalyticsInBackground());
       }
@@ -215,6 +191,70 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       if (showToast && mounted) {
         _showSnackBar("Refresh failed.", isError: true);
       }
+    }
+  }
+
+  Future<void> _loadUsersPage({
+    bool resetToFirstPage = false,
+    bool silent = false,
+  }) async {
+    if (resetToFirstPage) _usersPage = 0;
+    final page = _usersPage + 1;
+    final mode = _userSearchMode == 1
+        ? 'first'
+        : _userSearchMode == 2
+            ? 'last'
+            : 'all';
+    try {
+      final payload = await ApiService.fetchUsersPaginated(
+        page: page,
+        perPage: _usersRowsPerPage,
+        query: userSearchController.text,
+        searchMode: mode,
+      );
+      if (!mounted) return;
+      final items = (payload['items'] as List?) ?? const [];
+      final current = (payload['current_page'] as int?) ?? page;
+      final last = (payload['last_page'] as int?) ?? 1;
+      final total = (payload['total'] as int?) ?? items.length;
+      setState(() {
+        users = items;
+        _usersPage = current - 1;
+        _usersLastPage = last < 1 ? 1 : last;
+        totalUsers = total;
+      });
+    } catch (e) {
+      debugPrint('load users page: $e');
+      if (!silent && mounted) _showSnackBar("Failed to load users.", isError: true);
+    }
+  }
+
+  Future<void> _loadRecipesPage({
+    bool resetToFirstPage = false,
+    bool silent = false,
+  }) async {
+    if (resetToFirstPage) _recipesPage = 0;
+    final page = _recipesPage + 1;
+    try {
+      final payload = await ApiService.fetchAdminRecipesPaginated(
+        page: page,
+        perPage: _recipesRowsPerPage,
+        query: recipeSearchController.text,
+      );
+      if (!mounted) return;
+      final items = (payload['items'] as List?)?.cast<Recipe>() ?? const <Recipe>[];
+      final current = (payload['current_page'] as int?) ?? page;
+      final last = (payload['last_page'] as int?) ?? 1;
+      final total = (payload['total'] as int?) ?? items.length;
+      setState(() {
+        recipes = items;
+        _recipesPage = current - 1;
+        _recipesLastPage = last < 1 ? 1 : last;
+        totalRecipes = total;
+      });
+    } catch (e) {
+      debugPrint('load recipes page: $e');
+      if (!silent && mounted) _showSnackBar("Failed to load recipes.", isError: true);
     }
   }
 
@@ -730,16 +770,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   isCompactLayout: true,
                   onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
                 ),
-                Expanded(
-                  child: loading && !_hasFetched
-                      ? const Center(
-                          child: CircularProgressIndicator(
-                            color: primaryBrand,
-                            strokeWidth: 4,
-                          ),
-                        )
-                      : _buildSelectedScreen(),
-                ),
+                Expanded(child: _buildSelectedScreen()),
               ],
             )
           : Row(
@@ -749,16 +780,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   child: Column(
                     children: [
                       _buildHeader(),
-                      Expanded(
-                        child: loading && !_hasFetched
-                            ? const Center(
-                                child: CircularProgressIndicator(
-                                  color: primaryBrand,
-                                  strokeWidth: 4,
-                                ),
-                              )
-                            : _buildSelectedScreen(),
-                      ),
+                      Expanded(child: _buildSelectedScreen()),
                     ],
                   ),
                 ),
@@ -846,26 +868,24 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   // --- FULL DIRECTORY VIEWS ---
   Widget _buildFullUsersView() {
-    // Filter first, then paginate to avoid rendering huge tables on each tab switch.
-    final filteredUsers = users.where((u) {
-      return _matchesUserSearch(
-        u,
-        userSearchController.text,
-      );
-    }).toList();
-    final userTotalPages =
-        ((filteredUsers.length + _usersRowsPerPage - 1) ~/ _usersRowsPerPage)
-            .clamp(1, 999999);
-    final safeUsersPage = _usersPage >= userTotalPages
-        ? userTotalPages - 1
-        : _usersPage;
-    final userStart = safeUsersPage * _usersRowsPerPage;
-    final userEnd = (userStart + _usersRowsPerPage > filteredUsers.length)
-        ? filteredUsers.length
-        : userStart + _usersRowsPerPage;
-    final visibleUsers = filteredUsers.sublist(userStart, userEnd);
+    final visibleUsers = users;
+    final userTotalPages = _usersLastPage < 1 ? 1 : _usersLastPage;
+    final safeUsersPage = _usersPage >= userTotalPages ? userTotalPages - 1 : _usersPage;
+    final userStart = visibleUsers.isEmpty ? 0 : (safeUsersPage * _usersRowsPerPage) + 1;
+    final userEnd = visibleUsers.isEmpty
+        ? 0
+        : ((safeUsersPage * _usersRowsPerPage) + visibleUsers.length)
+            .clamp(1, totalUsers);
     final screenW = MediaQuery.sizeOf(context).width;
-    final userNameMaxWidth = screenW < 900 ? 160.0 : 220.0;
+    final compactUserTable = screenW < 1320;
+    final userNameMaxWidth = compactUserTable
+        ? (screenW < 900 ? 118.0 : 150.0)
+        : (screenW < 900 ? 160.0 : 220.0);
+    final userEmailMaxWidth = compactUserTable ? 170.0 : 240.0;
+    final joinedDateMaxWidth = compactUserTable ? 152.0 : 210.0;
+    final userTableHorizontalMargin = compactUserTable ? 16.0 : 32.0;
+    final userTableColumnSpacing = compactUserTable ? 18.0 : 34.0;
+    final userRowHeight = compactUserTable ? 66.0 : 70.0;
 
     final panelOuterPad = screenW < 900 ? 16.0 : 40.0;
     final headerInnerPad = screenW < 900 ? 20.0 : 32.0;
@@ -913,7 +933,13 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                     children: [
                       TextField(
                         controller: userSearchController,
-                        onChanged: (_) => setState(() => _usersPage = 0),
+                        onChanged: (_) {
+                          _userSearchDebounce?.cancel();
+                          _userSearchDebounce =
+                              Timer(const Duration(milliseconds: 260), () {
+                            unawaited(_loadUsersPage(resetToFirstPage: true));
+                          });
+                        },
                         decoration: InputDecoration(
                           hintText: "Search users...",
                           prefixIcon: const Icon(Icons.search, size: 20),
@@ -942,6 +968,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 _userSearchMode = 0;
                                 _usersPage = 0;
                               });
+                              unawaited(_loadUsersPage(resetToFirstPage: true));
                             },
                           ),
                           ChoiceChip(
@@ -952,6 +979,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 _userSearchMode = 1;
                                 _usersPage = 0;
                               });
+                              unawaited(_loadUsersPage(resetToFirstPage: true));
                             },
                           ),
                           ChoiceChip(
@@ -962,6 +990,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 _userSearchMode = 2;
                                 _usersPage = 0;
                               });
+                              unawaited(_loadUsersPage(resetToFirstPage: true));
                             },
                           ),
                         ],
@@ -1055,9 +1084,10 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   color: _mainText,
                   fontWeight: FontWeight.w600,
                 ),
-                dataRowMinHeight: 70,
-                dataRowMaxHeight: 70,
-                horizontalMargin: 32,
+                dataRowMinHeight: userRowHeight,
+                dataRowMaxHeight: userRowHeight,
+                horizontalMargin: userTableHorizontalMargin,
+                columnSpacing: userTableColumnSpacing,
                 dividerThickness: 1,
                 columns: const [
                   DataColumn(label: Text('ID')),
@@ -1122,7 +1152,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                       ),
                       DataCell(
                         ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 240),
+                          constraints: BoxConstraints(maxWidth: userEmailMaxWidth),
                           child: Text(
                             u['email'] ?? 'No email',
                             style: TextStyle(
@@ -1158,12 +1188,17 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         ),
                       ),
                       DataCell(
-                        Text(
-                          u['created_at']?.toString() ?? 'N/A',
-                          style: TextStyle(
-                            color: _mutedText,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
+                        SizedBox(
+                          width: joinedDateMaxWidth,
+                          child: Text(
+                            u['created_at']?.toString() ?? 'N/A',
+                            style: TextStyle(
+                              color: _mutedText,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ),
@@ -1178,6 +1213,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 color: infoBlue,
                               ),
                               tooltip: "Edit User",
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints(
+                                minWidth: 34,
+                                minHeight: 34,
+                              ),
                               onPressed: () => showEditUserDialog(u),
                             ),
                             IconButton(
@@ -1187,6 +1227,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 color: dangerRed,
                               ),
                               tooltip: "Remove User",
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints(
+                                minWidth: 34,
+                                minHeight: 34,
+                              ),
                               onPressed: () => deleteUser(u['id']),
                             ),
                           ],
@@ -1200,17 +1245,26 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
               child: _buildStandardPaginationBar(
-                summary: filteredUsers.isEmpty
+                summary: visibleUsers.isEmpty
                     ? "No users"
-                    : "Showing ${userStart + 1}-$userEnd of ${filteredUsers.length}",
+                    : "Showing $userStart-$userEnd of $totalUsers",
                 pageLabel: "${safeUsersPage + 1}/$userTotalPages",
                 currentPage: safeUsersPage + 1,
                 totalPages: userTotalPages,
-                onJumpToPage: (page) => setState(() => _usersPage = page - 1),
+                onJumpToPage: (page) {
+                  _usersPage = page - 1;
+                  unawaited(_loadUsersPage());
+                },
                 canGoPrev: safeUsersPage > 0,
                 canGoNext: safeUsersPage < userTotalPages - 1,
-                onPrev: () => setState(() => _usersPage = safeUsersPage - 1),
-                onNext: () => setState(() => _usersPage = safeUsersPage + 1),
+                onPrev: () {
+                  _usersPage = safeUsersPage - 1;
+                  unawaited(_loadUsersPage());
+                },
+                onNext: () {
+                  _usersPage = safeUsersPage + 1;
+                  unawaited(_loadUsersPage());
+                },
               ),
             ),
           ],
@@ -1264,19 +1318,10 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              child: actionLoading
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(
-                      actionLabel,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
+              child: Text(
+                actionLoading ? '…' : actionLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
             ),
             const SizedBox(width: 10),
           ],
@@ -1338,16 +1383,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }) {
     return ElevatedButton.icon(
       onPressed: isLoading ? null : onPressed,
-      icon: isLoading
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            )
-          : const Icon(Icons.expand_more_rounded, size: 18),
+      icon: const Icon(Icons.expand_more_rounded, size: 18),
       label: Text(
         isLoading ? "Loading..." : "Load More",
         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
@@ -1507,29 +1543,28 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }
 
   Widget _buildFullRecipesView() {
-    // Filter first, then paginate so recipe cards/images don't all build at once.
-    final filteredRecipes = recipes.where((r) {
-      final query = recipeSearchController.text.toLowerCase();
-      return r.name.toLowerCase().contains(query) ||
-          (r.category?.toLowerCase() ?? "").contains(query);
-    }).toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final recipeTotalPages =
-        ((filteredRecipes.length + _recipesRowsPerPage - 1) ~/
-                _recipesRowsPerPage)
-            .clamp(1, 999999);
+    final visibleRecipes = recipes;
+    final recipeTotalPages = _recipesLastPage < 1 ? 1 : _recipesLastPage;
     final safeRecipesPage = _recipesPage >= recipeTotalPages
         ? recipeTotalPages - 1
         : _recipesPage;
-    final recipeStart = safeRecipesPage * _recipesRowsPerPage;
-    final recipeEnd =
-        (recipeStart + _recipesRowsPerPage > filteredRecipes.length)
-        ? filteredRecipes.length
-        : recipeStart + _recipesRowsPerPage;
-    final visibleRecipes = filteredRecipes.sublist(recipeStart, recipeEnd);
+    final recipeStart = visibleRecipes.isEmpty ? 0 : (safeRecipesPage * _recipesRowsPerPage) + 1;
+    final recipeEnd = visibleRecipes.isEmpty
+        ? 0
+        : ((safeRecipesPage * _recipesRowsPerPage) + visibleRecipes.length)
+            .clamp(1, totalRecipes);
     final screenW = MediaQuery.sizeOf(context).width;
-    final dishNameMaxWidth = screenW < 900 ? 200.0 : 240.0;
-    final instructionsColWidth = screenW < 1000 ? 160.0 : 250.0;
+    final compactRecipeTable = screenW < 1320;
+    final dishNameMaxWidth = compactRecipeTable
+        ? (screenW < 900 ? 126.0 : 158.0)
+        : (screenW < 900 ? 200.0 : 240.0);
+    final instructionsColWidth = compactRecipeTable
+        ? (screenW < 900 ? 136.0 : 190.0)
+        : (screenW < 1000 ? 160.0 : 250.0);
+    final recipeTableHorizontalMargin = compactRecipeTable ? 16.0 : 32.0;
+    final recipeTableColumnSpacing = compactRecipeTable ? 18.0 : 34.0;
+    final recipeRowHeight = compactRecipeTable ? 72.0 : 76.0;
+    final recipeThumbSize = compactRecipeTable ? 40.0 : 48.0;
 
     final panelOuterPad = screenW < 900 ? 16.0 : 40.0;
     final headerInnerPad = screenW < 900 ? 20.0 : 32.0;
@@ -1574,7 +1609,13 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   );
                   final searchField = TextField(
                     controller: recipeSearchController,
-                    onChanged: (_) => setState(() => _recipesPage = 0),
+                    onChanged: (_) {
+                      _recipeSearchDebounce?.cancel();
+                      _recipeSearchDebounce =
+                          Timer(const Duration(milliseconds: 260), () {
+                        unawaited(_loadRecipesPage(resetToFirstPage: true));
+                      });
+                    },
                     decoration: InputDecoration(
                       hintText: "Search dish or category...",
                       prefixIcon: const Icon(Icons.search, size: 20),
@@ -1677,9 +1718,10 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   color: _mainText,
                   fontWeight: FontWeight.w600,
                 ),
-                dataRowMinHeight: 76,
-                dataRowMaxHeight: 76,
-                horizontalMargin: 32,
+                dataRowMinHeight: recipeRowHeight,
+                dataRowMaxHeight: recipeRowHeight,
+                horizontalMargin: recipeTableHorizontalMargin,
+                columnSpacing: recipeTableColumnSpacing,
                 dividerThickness: 1,
                 columns: const [
                   DataColumn(label: Text('ID')),
@@ -1709,8 +1751,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         Row(
                           children: [
                             Container(
-                              width: 48,
-                              height: 48,
+                              width: recipeThumbSize,
+                              height: recipeThumbSize,
                               decoration: BoxDecoration(
                                 color: _pageBg,
                                 borderRadius: BorderRadius.circular(12),
@@ -1822,6 +1864,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 color: infoBlue,
                               ),
                               tooltip: "Edit Recipe",
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints(
+                                minWidth: 34,
+                                minHeight: 34,
+                              ),
                               onPressed: () => Navigator.push(
                                 context,
                                 MaterialPageRoute(
@@ -1836,6 +1883,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                                 color: dangerRed,
                               ),
                               tooltip: "Delete Recipe",
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints(
+                                minWidth: 34,
+                                minHeight: 34,
+                              ),
                               onPressed: () => deleteRecipe(r.id),
                             ),
                           ],
@@ -1849,17 +1901,26 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
               child: _buildStandardPaginationBar(
-                summary: filteredRecipes.isEmpty
+                summary: visibleRecipes.isEmpty
                     ? "No recipes"
-                    : "Showing ${recipeStart + 1}-$recipeEnd of ${filteredRecipes.length}",
+                    : "Showing $recipeStart-$recipeEnd of $totalRecipes",
                 pageLabel: "${safeRecipesPage + 1}/$recipeTotalPages",
                 currentPage: safeRecipesPage + 1,
                 totalPages: recipeTotalPages,
-                onJumpToPage: (page) => setState(() => _recipesPage = page - 1),
+                onJumpToPage: (page) {
+                  _recipesPage = page - 1;
+                  unawaited(_loadRecipesPage());
+                },
                 canGoPrev: safeRecipesPage > 0,
                 canGoNext: safeRecipesPage < recipeTotalPages - 1,
-                onPrev: () => setState(() => _recipesPage = safeRecipesPage - 1),
-                onNext: () => setState(() => _recipesPage = safeRecipesPage + 1),
+                onPrev: () {
+                  _recipesPage = safeRecipesPage - 1;
+                  unawaited(_loadRecipesPage());
+                },
+                onNext: () {
+                  _recipesPage = safeRecipesPage + 1;
+                  unawaited(_loadRecipesPage());
+                },
               ),
             ),
           ],
@@ -2968,7 +3029,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 width: 600,
                 height: 500,
                 child: isLoading
-                    ? Center(child: CircularProgressIndicator(color: _mainText))
+                    ? Center(
+                        child: Text(
+                          'Syncing…',
+                          style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
+                        ),
+                      )
                     : Column(
                         children: [
                           Container(
@@ -3293,7 +3359,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 width: 600,
                 height: 500,
                 child: isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? Center(
+                        child: Text(
+                          'Syncing…',
+                          style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
+                        ),
+                      )
                     : Column(
                         children: [
                           Container(
@@ -3661,7 +3732,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 width: 600,
                 height: 500,
                 child: isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? Center(
+                        child: Text(
+                          'Syncing…',
+                          style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
+                        ),
+                      )
                     : Column(
                         children: [
                           Container(
@@ -4011,7 +4087,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 width: 600,
                 height: 500,
                 child: isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? Center(
+                        child: Text(
+                          'Syncing…',
+                          style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
+                        ),
+                      )
                     : Column(
                         children: [
                           Container(
