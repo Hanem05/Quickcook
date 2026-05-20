@@ -18,6 +18,10 @@ class Recipe extends Model
         'image',
     ];
 
+    protected $appends = [
+        'image_url',
+    ];
+
     public function ingredients()
     {
         return $this->belongsToMany(
@@ -58,7 +62,18 @@ class Recipe extends Model
         $encoded = implode('/', array_map('rawurlencode', explode('/', $raw)));
 
         if (str_starts_with($raw, 'images/')) {
+            $request = request();
+            if ($request !== null) {
+                return $request->getSchemeAndHttpHost().'/'.$encoded;
+            }
+
             return asset($encoded);
+        }
+
+        // Prefer current request origin (works for emulator host 10.0.2.2 and web localhost).
+        $request = request();
+        if ($request !== null) {
+            return $request->getSchemeAndHttpHost().'/storage/'.$encoded;
         }
 
         $cdnBase = rtrim((string) env('APP_CDN_URL', ''), '/');
@@ -67,8 +82,13 @@ class Recipe extends Model
         }
 
         $publicBase = rtrim((string) env('APP_STORAGE_PUBLIC_BASE_URL', ''), '/');
-        if ($publicBase !== '') {
+        if ($publicBase !== '' && ! str_contains($publicBase, '://nginx')) {
             return $publicBase.'/storage/'.$encoded;
+        }
+
+        $appUrl = rtrim((string) config('app.url'), '/');
+        if ($appUrl !== '' && ! str_contains($appUrl, '://nginx')) {
+            return $appUrl.'/storage/'.$encoded;
         }
 
         return asset('storage/'.$encoded);

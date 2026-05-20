@@ -1,3 +1,5 @@
+import '../utils/recipe_image_resolver.dart';
+
 class Recipe {
   final int id;
   final String name;
@@ -42,7 +44,7 @@ class Recipe {
   /// at once on Android emulator / low-end devices. Detail pages can still use
   /// [imageUrl] for the full image.
   String? get thumbnailUrl {
-    final url = imageUrl?.trim();
+    final url = RecipeImageResolver.networkUrl(imageUrl)?.trim();
     if (url == null || url.isEmpty) return null;
     if (url.contains('themealdb.com/images/media/meals') &&
         !url.endsWith('/preview')) {
@@ -50,6 +52,9 @@ class Recipe {
     }
     return url;
   }
+
+  /// Bundled photo from [imgs] (used when network image fails).
+  String get bundledImageAsset => RecipeImageResolver.bundledFallback(id);
 
   factory Recipe.fromJson(Map<String, dynamic> json) {
     List<String> ingredientNames = [];

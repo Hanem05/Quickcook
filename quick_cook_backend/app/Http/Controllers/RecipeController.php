@@ -138,22 +138,26 @@ class RecipeController extends Controller
     public function index()
     {
         $compact = (int) request()->query('compact', 0) === 1;
+        $page = max(1, (int) request()->query('page', 1));
         $category = request()->query('category');
         $difficulty = request()->query('difficulty');
+        $q = trim((string) request()->query('q', ''));
         $ingredientIds = request()->query('ingredient_ids', []);
         $maxCookingTime = (int) request()->query('max_cooking_time', 0);
-        $perPage = min(200, max(5, (int) request()->query('per_page', 25)));
+        $perPage = min(500, max(5, (int) request()->query('per_page', 25)));
 
         $key = 'recipes:v'.$this->recipesCacheVersion().':'.md5(json_encode([
             'category' => $category,
             'difficulty' => $difficulty,
+            'q' => $q,
             'ingredient_ids' => $ingredientIds,
             'max_cooking_time' => $maxCookingTime,
+            'page' => $page,
             'per_page' => $perPage,
             'compact' => $compact ? 1 : 0,
         ]));
 
-        $recipes = Cache::remember($key, now()->addMinutes(5), function () use ($category, $difficulty, $ingredientIds, $maxCookingTime, $perPage, $compact) {
+        $recipes = Cache::remember($key, now()->addMinutes(5), function () use ($category, $difficulty, $q, $ingredientIds, $maxCookingTime, $perPage, $compact) {
             $query = Recipe::query()->orderByDesc('id');
 
             if (! $compact) {
@@ -176,6 +180,13 @@ class RecipeController extends Controller
             if (is_string($difficulty) && in_array($difficulty, ['easy', 'medium', 'hard'], true)) {
                 $query->where('difficulty', $difficulty);
             }
+            if ($q !== '') {
+                $query->where(function ($builder) use ($q) {
+                    $builder
+                        ->where('name', 'like', '%'.$q.'%')
+                        ->orWhere('category', 'like', '%'.$q.'%');
+                });
+            }
             if ($maxCookingTime > 0) {
                 $query->where('cooking_time', '<=', $maxCookingTime);
             }
@@ -186,30 +197,29 @@ class RecipeController extends Controller
                 }, '>=', count($ids));
             }
 
-            $page = $query->paginate($perPage);
-            if (! $compact) {
-                return $page;
-            }
-
-            $page->getCollection()->transform(function (Recipe $recipe) {
-                return [
-                    'id' => $recipe->id,
-                    'name' => $recipe->name,
-                    'category' => $recipe->category,
-                    'difficulty' => $recipe->difficulty ?? 'medium',
-                    'cooking_time' => (int) ($recipe->cooking_time ?? 30),
-                    'image_url' => $recipe->image_url,
-                    'image' => $recipe->image_url,
-                    'ingredients' => [],
-                    'instructions' => '',
-                    'average_rating' => $recipe->average_rating !== null
-                        ? round((float) $recipe->average_rating, 1)
-                        : 0.0,
-                ];
-            });
-
-            return $page;
+            return $query->paginate($perPage);
         });
+
+        if ($compact && $recipes instanceof \Illuminate\Pagination\LengthAwarePaginator) {
+            $recipes->setCollection(
+                $recipes->getCollection()->map(function (Recipe $recipe) {
+                    return [
+                        'id' => $recipe->id,
+                        'name' => $recipe->name,
+                        'category' => $recipe->category,
+                        'difficulty' => $recipe->difficulty ?? 'medium',
+                        'cooking_time' => (int) ($recipe->cooking_time ?? 30),
+                        'image_url' => $recipe->image_url,
+                        'image' => $recipe->image_url,
+                        'ingredients' => [],
+                        'instructions' => '',
+                        'average_rating' => $recipe->average_rating !== null
+                            ? round((float) $recipe->average_rating, 1)
+                            : 0.0,
+                    ];
+                })
+            );
+        }
 
         return response()->json($recipes);
     }

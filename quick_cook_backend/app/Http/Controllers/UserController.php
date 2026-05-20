@@ -5,13 +5,44 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class UserController extends Controller
 {
-    // For Admin: Get all users
-    public function index()
+    // For Admin: Get users (paginated/searchable for large datasets)
+    public function index(Request $request)
     {
-        return response()->json(User::select('id', 'name', 'email', 'role', 'created_at')->get());
+        $perPage = min(500, max(10, (int) $request->query('per_page', 20)));
+        $page = max(1, (int) $request->query('page', 1));
+        $q = trim((string) $request->query('q', ''));
+        $searchMode = trim((string) $request->query('search_mode', 'all')); // all|first|last
+
+        $query = User::query()->select('id', 'name', 'email', 'role', 'created_at');
+
+        if ($q !== '') {
+            $needle = Str::lower($q);
+            $query->where(function ($builder) use ($needle, $searchMode) {
+                // first/last mode works best when names are in "First Last" format.
+                if ($searchMode === 'first') {
+                    $builder->whereRaw('LOWER(SUBSTRING_INDEX(name, " ", 1)) LIKE ?', ["%{$needle}%"]);
+                    return;
+                }
+                if ($searchMode === 'last') {
+                    $builder->whereRaw('LOWER(SUBSTRING_INDEX(name, " ", -1)) LIKE ?', ["%{$needle}%"]);
+                    return;
+                }
+
+                $builder
+                    ->whereRaw('LOWER(name) LIKE ?', ["%{$needle}%"])
+                    ->orWhereRaw('LOWER(email) LIKE ?', ["%{$needle}%"]);
+            });
+        }
+
+        $users = $query
+            ->orderByDesc('id')
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json($users);
     }
 
     // NEW: Get current logged in user (This is what Flutter is looking for)

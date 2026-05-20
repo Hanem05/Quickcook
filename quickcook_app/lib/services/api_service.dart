@@ -16,6 +16,7 @@ import 'connectivity_service.dart';
 import 'offline_cache_service.dart';
 import 'performance_reporter.dart';
 import 'app_logger.dart';
+import '../utils/recipe_image_resolver.dart';
 
 class ApiService {
   static String? token;
@@ -624,10 +625,27 @@ class ApiService {
     }
   }
 
+  /// Bumped when the full recipe catalog finishes loading (UI can refresh).
+  static final ValueNotifier<int> recipesCatalogRevision = ValueNotifier(0);
+
+  static List<Recipe>? peekCachedRecipes() {
+    final cached = _cache['recipes_all'];
+    return cached is List<Recipe> ? cached : null;
+  }
+
   static List<Recipe> _parseRecipeListResponse(String body) {
     final decoded = jsonDecode(body);
     List data = decoded is Map ? (decoded['data'] ?? []) : decoded;
-    return data.map((e) => Recipe.fromJson(e)).toList();
+    return data.map((e) {
+      final map = Map<String, dynamic>.from(e as Map);
+      final raw = map['image_url'] ?? map['image'];
+      final resolved = RecipeImageResolver.networkUrl(raw?.toString());
+      if (resolved != null) {
+        map['image_url'] = resolved;
+        map['image'] = resolved;
+      }
+      return Recipe.fromJson(map);
+    }).toList();
   }
 
   static Future<List<Recipe>> fetchRecipes({bool forceRefresh = false}) async {
@@ -642,30 +660,20 @@ class ApiService {
         return _recipesInFlight!;
       }
 
-      // Fast path: serve bundled asset / offline immediately on first cold
-      // start so the UI never waits on the API. Live data refreshes in
-      // background.
-      try {
-        final offline = await OfflineCacheService.loadRecipesJson();
-        if (offline != null && offline.isNotEmpty) {
-          final list = _parseRecipeListResponse(offline);
-          if (list.isNotEmpty) {
-            _cache['recipes_all'] = list;
-            _recipesFetchedAt = DateTime.now();
-            unawaited(_fetchRecipesInternal());
-            return list;
+      // Offline / bundled fallback only when there is no network.
+      final online = await ConnectivityService.isOnline;
+      if (!online) {
+        try {
+          final offline = await OfflineCacheService.loadRecipesJson();
+          if (offline != null && offline.isNotEmpty) {
+            final list = _parseRecipeListResponse(offline);
+            if (list.isNotEmpty) {
+              _cache['recipes_all'] = list;
+              _recipesFetchedAt = DateTime.now();
+              return list;
+            }
           }
-        }
-        final asset = await rootBundle.loadString('assets/data/recipes.json');
-        final list = _parseRecipeListResponse(asset);
-        if (list.isNotEmpty) {
-          _cache['recipes_all'] = list;
-          _recipesFetchedAt = DateTime.now();
-          unawaited(_fetchRecipesInternal());
-          return list;
-        }
-      } catch (_) {
-        // fall through to live fetch
+        } catch (_) {}
       }
     } else {
       _cache.remove('recipes_all');
@@ -684,8 +692,6 @@ class ApiService {
     final rawCached = await OfflineCacheService.loadRecipesJson();
 
     final sw = Stopwatch()..start();
-    // Keep initial app payload smaller to improve first load.
-    final uri = Uri.parse("$baseUrl/recipes?compact=1&per_page=80");
     try {
       final online = await ConnectivityService.isOnline;
       if (!online) {
@@ -696,20 +702,49 @@ class ApiService {
         }
       }
 
-      final response = await http
-          .get(uri, headers: await _getHeaders())
-          .timeout(_httpTimeout);
+      final all = <Recipe>[];
+      var page = 1;
+      var lastPage = 1;
+      const perPage = 200;
 
-      debugPrint("FETCH RECIPES STATUS: ${response.statusCode}");
+      do {
+        final uri = Uri.parse(
+          '$baseUrl/recipes?compact=1&per_page=$perPage&page=$page',
+        );
+        final response = await http
+            .get(uri, headers: await _getHeaders())
+            .timeout(_httpTimeout);
+
+        if (kDebugMode && page == 1) {
+          debugPrint('FETCH RECIPES STATUS: ${response.statusCode}');
+        }
+
+        if (response.statusCode != 200) {
+          break;
+        }
+
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) {
+          lastPage = int.tryParse('${decoded['last_page']}') ?? 1;
+        }
+
+        all.addAll(_parseRecipeListResponse(response.body));
+        page++;
+      } while (page <= lastPage && page <= 60);
+
       sw.stop();
       await PerformanceReporter.onApiCall('GET /recipes', sw.elapsedMilliseconds);
 
-      if (response.statusCode == 200) {
-        await OfflineCacheService.saveRecipesJson(response.body);
-        final list = _parseRecipeListResponse(response.body);
-        _cache['recipes_all'] = list;
+      if (all.isNotEmpty) {
+        final encoded = jsonEncode({
+          'data': all.map((r) => r.toJson()).toList(),
+          'total': all.length,
+        });
+        await OfflineCacheService.saveRecipesJson(encoded);
+        _cache['recipes_all'] = all;
         _recipesFetchedAt = DateTime.now();
-        return list;
+        recipesCatalogRevision.value++;
+        return all;
       }
       if (rawCached != null && rawCached.isNotEmpty) {
         final list = _parseRecipeListResponse(rawCached);

@@ -4,6 +4,7 @@ import 'dart:async';
 
 import '../models/recipe.dart';
 import '../services/api_service.dart';
+import '../widgets/recipe_image.dart';
 import 'favorites_screen.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
@@ -28,11 +29,25 @@ class _AllRecipesLandingScreenState extends State<AllRecipesLandingScreen> {
   @override
   void initState() {
     super.initState();
+    ApiService.recipesCatalogRevision.addListener(_onCatalogUpdated);
     _loadRecipes();
+  }
+
+  void _onCatalogUpdated() {
+    if (!mounted) return;
+    final cached = ApiService.peekCachedRecipes();
+    if (cached != null && cached.isNotEmpty) {
+      setState(() {
+        _allRecipes = cached;
+        _loading = false;
+      });
+      _applyFilters();
+    }
   }
 
   @override
   void dispose() {
+    ApiService.recipesCatalogRevision.removeListener(_onCatalogUpdated);
     _searchController.dispose();
     super.dispose();
   }
@@ -348,7 +363,6 @@ class _RecipeBrowseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final image = recipe.thumbnailUrl;
     return InkWell(
       borderRadius: BorderRadius.circular(20),
       onTap: onOpen,
@@ -365,36 +379,15 @@ class _RecipeBrowseCard extends StatelessWidget {
               flex: 7,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
-                child: image != null && image.isNotEmpty
-                    ? Stack(
+                child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          CachedNetworkImage(
-                            imageUrl: image,
+                          RecipeImage(
+                            recipeId: recipe.id,
+                            imageUrl: recipe.imageUrl,
                             fit: BoxFit.cover,
                             width: double.infinity,
                             memCacheWidth: 320,
-                            placeholder: (context, url) => Container(
-                              color: cs.surfaceContainerLow,
-                              child: Center(
-                                child: SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.2,
-                                    color: cs.primary,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            errorWidget: (context, url, error) => Container(
-                              color: cs.surfaceContainerLow,
-                              child: Icon(
-                                Icons.restaurant_menu_rounded,
-                                color: cs.onSurfaceVariant,
-                                size: 38,
-                              ),
-                            ),
                           ),
                           Positioned.fill(
                             child: DecoratedBox(
@@ -437,14 +430,6 @@ class _RecipeBrowseCard extends StatelessWidget {
                             ),
                           ),
                         ],
-                      )
-                    : Container(
-                        color: cs.surfaceContainerLow,
-                        child: Icon(
-                          Icons.restaurant_menu_rounded,
-                          color: cs.onSurfaceVariant,
-                          size: 38,
-                        ),
                       ),
               ),
             ),

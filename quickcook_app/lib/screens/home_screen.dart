@@ -13,6 +13,7 @@ import '../services/connectivity_service.dart';
 import '../services/notification_service.dart';
 import '../utils/app_update_check.dart';
 import '../widgets/app_message.dart';
+import '../widgets/recipe_image.dart';
 
 import 'login_screen.dart';
 import 'recipe_screen.dart';
@@ -833,21 +834,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(20),
                       ),
-                      child: (recipe.thumbnailUrl != null &&
-                              recipe.thumbnailUrl!.trim().isNotEmpty)
-                          ? CachedNetworkImage(
-                              imageUrl: recipe.thumbnailUrl!,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              fadeInDuration: const Duration(milliseconds: 160),
-                              fadeOutDuration: const Duration(milliseconds: 80),
-                              memCacheWidth: 320,
-                              placeholder: (context, url) =>
-                                  _imageLoadingPlaceholder(cs),
-                              errorWidget: (context, url, error) =>
-                                  _imageEmptyPlaceholder(cs),
-                            )
-                          : _imageEmptyPlaceholder(cs),
+                      child: RecipeImage(
+                        recipeId: recipe.id,
+                        imageUrl: recipe.imageUrl,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        memCacheWidth: 320,
+                      ),
                     ),
                   ),
                   Padding(
@@ -1190,21 +1183,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(20),
                 ),
-                child: (recipe.thumbnailUrl != null &&
-                        recipe.thumbnailUrl!.trim().isNotEmpty)
-                    ? CachedNetworkImage(
-                        imageUrl: recipe.thumbnailUrl!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        fadeInDuration: const Duration(milliseconds: 160),
-                        fadeOutDuration: const Duration(milliseconds: 80),
-                        memCacheWidth: 320,
-                        placeholder: (context, url) =>
-                            _imageLoadingPlaceholder(cs),
-                        errorWidget: (context, url, error) =>
-                            _imageEmptyPlaceholder(cs),
-                      )
-                    : _imageEmptyPlaceholder(cs),
+                child: RecipeImage(
+                  recipeId: recipe.id,
+                  imageUrl: recipe.imageUrl,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  memCacheWidth: 320,
+                ),
               ),
             ),
             Expanded(

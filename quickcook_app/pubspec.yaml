@@ -32,3 +32,4 @@ flutter:
   assets:
     - assets/data/ingredients.json
     - assets/data/recipes.json
+    - assets/images/recipes/
