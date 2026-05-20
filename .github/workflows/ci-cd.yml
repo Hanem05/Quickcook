@@ -1,0 +1,191 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "Backend API URL for APK (optional; overrides variable API_BASE_URL)"
+        required: false
+        type: string
+      skip_release:
+        description: "Run tests/build only; do not publish GitHub Release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  backend-quality:
+    name: Backend Quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: quick_cook_backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Lint PHP files
+        run: git ls-files "*.php" | xargs -n1 php -l
+
+      - name: Validate Laravel bootstrap
+        run: php artisan --version
+
+      - name: Run PHPUnit (dot output)
+        run: |
+          mkdir -p build
+          vendor/bin/phpunit --colors=always --log-junit build/phpunit-report.xml
+
+      - name: Enforce minimum PHPUnit test count (70+)
+        if: github.event_name != 'pull_request'
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = "build/phpunit-report.xml"
+          try:
+              root = ET.parse(path).getroot()
+          except Exception as exc:
+              print(f"Unable to read PHPUnit report: {exc}", file=sys.stderr)
+              sys.exit(1)
+
+          tests_attr = root.attrib.get("tests")
+          if tests_attr is not None:
+              tests = int(tests_attr)
+          else:
+              tests = sum(int(node.attrib.get("tests", "0")) for node in root.iter("testsuite"))
+
+          print(f"PHPUnit tests executed: {tests}")
+          if tests < 70:
+              print("Expected at least 70 PHPUnit tests.", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+  flutter-quality:
+    name: Flutter Quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: quickcook_app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Run tests (compact dot-style output)
+        run: flutter test --reporter=compact
+
+  release:
+    name: Build and Release
+    needs: [backend-quality, flutter-quality]
+    if: >-
+      needs.backend-quality.result == 'success' &&
+      needs.flutter-quality.result == 'success' &&
+      github.event_name != 'pull_request' &&
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+      (github.event_name != 'workflow_dispatch' || inputs.skip_release != true)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build Flutter web
+        working-directory: quickcook_app
+        run: |
+          flutter pub get
+          flutter build web --release
+
+      - name: Build Flutter Android APK
+        working-directory: quickcook_app
+        env:
+          INPUT_API: ${{ inputs.api_base_url }}
+          VAR_API: ${{ vars.API_BASE_URL }}
+        run: |
+          API_URL="${INPUT_API:-$VAR_API}"
+          ARGS=""
+          if [ -n "$API_URL" ]; then
+            ARGS="--dart-define=API_BASE_URL=$API_URL"
+            echo "Building with API_BASE_URL=$API_URL"
+          fi
+          flutter build apk --release $ARGS
+
+      - name: Prepare APK for release
+        run: cp quickcook_app/build/app/outputs/flutter-apk/app-release.apk quickcook.apk
+
+      - name: Package backend source
+        run: tar -czf quickcook-backend-src.tar.gz quick_cook_backend
+
+      - name: Upload Flutter web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcook-web-build
+          path: quickcook_app/build/web
+
+      - name: Upload backend source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcook-backend-source
+          path: quickcook-backend-src.tar.gz
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcook-android-apk
+          path: quickcook.apk
+
+      - name: Publish APK to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mobile-${{ github.run_number }}
+          name: QuickCook Android APK (build ${{ github.run_number }})
+          body: |
+            ## Install on Android
+
+            1. Download **quickcook.apk** from the assets below.
+            2. On your phone, allow installation from unknown sources if prompted.
+            3. Open the APK to install.
+
+            ## Backend API
+
+            Set repository variable `API_BASE_URL` (Settings → Secrets and variables → Actions → Variables),
+            for example `https://your-server.com/api`, then re-run CI/CD.
+
+            Without it, the app defaults to `http://10.0.2.2:8001/api` (emulator). On a physical phone use your PC LAN IP.
+          files: quickcook.apk
+          make_latest: true

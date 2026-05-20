@@ -1,17 +1,22 @@
-# quickcook_app
+# QuickCook (Flutter)
 
-A new Flutter project.
+Mobile and web client for QuickCook.
 
-## Getting Started
+**Android APK:** see the repo root [README](../README.md#download-android-apk) for the GitHub download link and API configuration.
 
-This project is a starting point for a Flutter application.
+## Run in development
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+flutter pub get
+flutter run
+# Physical device on same Wi‑Fi as Docker backend:
+# flutter run --dart-define=API_HOST=192.168.x.x
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Build release APK
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+flutter build apk --release
+# With production API:
+# flutter build apk --release --dart-define=API_BASE_URL=https://your-host/api
+```
