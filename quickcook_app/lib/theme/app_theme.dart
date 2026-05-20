@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 
 /// A scroll behavior that gives every scrollable in the app the same smooth
 /// bouncy feel and accepts trackpad / mouse drag (a common cause of "stiff"
