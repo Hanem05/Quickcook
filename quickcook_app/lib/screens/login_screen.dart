@@ -250,7 +250,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     return "Email is required";
                                   }
                                   if (!value.contains("@")) {
-                                    return "Enter a valid email";
+                                    return "Please enter a valid email";
                                   }
                                   return null;
                                 },
