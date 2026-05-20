@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data'; // ADDED: For handling raw file bytes
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:file_saver/file_saver.dart'; // ADDED: Cross-platform file saving
 import 'package:provider/provider.dart';
