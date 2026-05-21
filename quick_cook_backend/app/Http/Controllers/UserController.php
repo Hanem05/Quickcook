@@ -24,11 +24,11 @@ class UserController extends Controller
             $query->where(function ($builder) use ($needle, $searchMode) {
                 // first/last mode works best when names are in "First Last" format.
                 if ($searchMode === 'first') {
-                    $builder->whereRaw('LOWER(SUBSTRING_INDEX(name, " ", 1)) LIKE ?', ["%{$needle}%"]);
+                    $builder->whereRaw("LOWER(SUBSTRING_INDEX(name, ' ', 1)) LIKE ?", ["%{$needle}%"]);
                     return;
                 }
                 if ($searchMode === 'last') {
-                    $builder->whereRaw('LOWER(SUBSTRING_INDEX(name, " ", -1)) LIKE ?', ["%{$needle}%"]);
+                    $builder->whereRaw("LOWER(SUBSTRING_INDEX(name, ' ', -1)) LIKE ?", ["%{$needle}%"]);
                     return;
                 }
 

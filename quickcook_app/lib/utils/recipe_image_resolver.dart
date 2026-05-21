@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import '../services/api_service.dart';
 
 /// Maps recipes to bundled seed photos and fixes API image URLs for emulators/phones.
@@ -71,11 +73,20 @@ class RecipeImageResolver {
     return origin.replace(path: '/$path').toString();
   }
 
+  static List<String> get _bundledPool {
+    if (!kIsWeb) return bundledAssets;
+    final safe = bundledAssets
+        .where((a) => a.endsWith('.jpg') || a.endsWith('.png'))
+        .toList();
+    return safe.isNotEmpty ? safe : bundledAssets;
+  }
+
   static String bundledAssetForRecipeId(int id) {
-    if (bundledAssets.isEmpty || id <= 0) {
-      return bundledAssets.isNotEmpty ? bundledAssets.first : '';
+    final pool = _bundledPool;
+    if (pool.isEmpty || id <= 0) {
+      return pool.isNotEmpty ? pool.first : '';
     }
-    return bundledAssets[(id - 1) % bundledAssets.length];
+    return pool[(id - 1) % pool.length];
   }
 
   /// Prefer API image; fall back to bundled seed photo (always works offline).

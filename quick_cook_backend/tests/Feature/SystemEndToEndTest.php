@@ -167,6 +167,38 @@ class SystemEndToEndTest extends TestCase
             ->assertJsonPath('average_rating', 5);
     }
 
+    public function test_compact_browse_search_matches_recipe_name_and_ingredient(): void
+    {
+        $this->createRecipe('Ginatans', ['Coconut Milk', 'Shrimp']);
+        $adobo = $this->createRecipe('Chicken Adobo', ['Chicken', 'Soy Sauce', 'Vinegar']);
+
+        $byName = $this->getJson('/api/recipes?compact=1&per_page=10&q=adobo')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertNotEmpty($byName);
+        $this->assertTrue(
+            collect($byName)->contains(fn (array $row): bool => (int) ($row['id'] ?? 0) === $adobo->id)
+        );
+        $this->assertFalse(
+            collect($byName)->contains(fn (array $row): bool => str_contains(
+                strtolower((string) ($row['name'] ?? '')),
+                'ginatans'
+            ))
+        );
+
+        $byIngredient = $this->getJson('/api/recipes?compact=1&per_page=10&q=shrimp')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertTrue(
+            collect($byIngredient)->contains(fn (array $row): bool => str_contains(
+                strtolower((string) ($row['name'] ?? '')),
+                'ginatans'
+            ))
+        );
+    }
+
     public function test_recommendation_and_feed_endpoints_are_available_for_user(): void
     {
         $user = $this->createUser();

@@ -11,6 +11,7 @@ import '../models/recipe.dart';
 import '../services/api_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/notification_service.dart';
+import '../theme/app_colors.dart';
 import '../utils/app_update_check.dart';
 import '../widgets/app_message.dart';
 import '../widgets/recipe_image.dart';
@@ -632,8 +633,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                     child: Material(
                                       color: cs.brightness == Brightness.dark
-                                          ? const Color(0xFF3A2D09)
-                                          : Colors.amber.shade100,
+                                          ? AppColors.brandDark.withValues(alpha: 0.85)
+                                          : cs.primaryContainer,
                                       borderRadius: BorderRadius.circular(12),
                                       child: Padding(
                                         padding: const EdgeInsets.all(12),
@@ -642,8 +643,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                             Icon(
                                               Icons.wifi_off_rounded,
                                               color: cs.brightness == Brightness.dark
-                                                  ? const Color(0xFFFFD166)
-                                                  : Colors.amber.shade900,
+                                                  ? AppColors.brandLight
+                                                  : cs.primary,
                                             ),
                                             const SizedBox(width: 12),
                                             Expanded(
@@ -652,8 +653,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 style: TextStyle(
                                                   color: cs.brightness ==
                                                           Brightness.dark
-                                                      ? const Color(0xFFFFE39A)
-                                                      : Colors.amber.shade900,
+                                                      ? AppColors.brandLight
+                                                      : cs.onPrimaryContainer,
                                                   fontWeight: FontWeight.w600,
                                                   fontSize: 13,
                                                 ),

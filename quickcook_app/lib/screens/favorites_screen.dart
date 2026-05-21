@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/recipe.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../theme/app_colors.dart';
 import '../widgets/recipe_image.dart';
 import 'recipe_detail_screen.dart';
 
@@ -14,17 +15,8 @@ class FavoritesScreen extends StatefulWidget {
 
 class _FavoritesScreenState extends State<FavoritesScreen> {
   List<Recipe> favorites = [];
-  bool _hasFetched = false;
 
-  // --- MODERN TEAL & ZINC PALETTE ---
-  static const Color primaryBrand = Color(0xFFC2410C);
-  static const Color darkSlate = Color(0xFF18181B);
-  static const Color bgSoft = Color(0xFFF4F4F5);
-  static const Color surfaceWhite = Color(0xFFFFFFFF);
-  static const Color borderLight = Color(0xFFE4E4E7);
-  static const Color textMain = Color(0xFF27272A);
-  static const Color textMuted = Color(0xFF71717A);
-  static const Color warningAmber = Color(0xFFF59E0B);
+  static const Color warningAmber = AppColors.warningAmber;
 
   @override
   void initState() {
@@ -36,11 +28,22 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     try {
       final data = await ApiService.fetchFavorite(forceRefresh: force);
       if (!mounted) return;
-      setState(() {
-        favorites = data;
-        _hasFetched = true;
-      });
+      setState(() => favorites = data);
     } catch (_) {}
+  }
+
+  Future<void> _openRecipe(Recipe recipe) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RecipeDetailScreen(
+          recipeId: recipe.id,
+          initialRecipe: recipe,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await loadFavorites(force: true);
   }
 
   Future<void> removeFavorite(int recipeId) async {
@@ -49,9 +52,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       setState(() {
         favorites.removeWhere((recipe) => recipe.id == recipeId);
       });
-      _showSnackBar("Recipe removed from favorites.");
+      _showSnackBar('Recipe removed from favorites.');
     } catch (e) {
-      _showSnackBar("Failed to remove favorite.", isError: true);
+      _showSnackBar('Failed to remove favorite.', isError: true);
     }
   }
 
@@ -63,9 +66,46 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
+  bool _hasDisplayRating(Recipe recipe) {
+    return recipe.ratingsCount > 0 &&
+        recipe.rating != null &&
+        recipe.rating! > 0;
+  }
+
+  Widget _buildRatingBadge(Recipe recipe) {
+    final cs = Theme.of(context).colorScheme;
+    if (!_hasDisplayRating(recipe)) {
+      return Text(
+        'No rating yet',
+        style: TextStyle(
+          color: cs.onSurfaceVariant,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.star_rounded, color: warningAmber, size: 16),
+        const SizedBox(width: 4),
+        Text(
+          recipe.rating!.toStringAsFixed(1),
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: cs.onSurface,
+            fontSize: 13,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final width = MediaQuery.sizeOf(context).width;
+
     return Scaffold(
       backgroundColor: cs.surface,
       appBar: AppBar(
@@ -74,7 +114,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         elevation: 0,
         centerTitle: false,
         title: Text(
-          "My Favorites",
+          'My Favorites',
           style: TextStyle(
             color: cs.onSurface,
             fontWeight: FontWeight.w900,
@@ -90,9 +130,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: 800,
-            ), // 🌿 Web Responsiveness
+            constraints: const BoxConstraints(maxWidth: 800),
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
               child: favorites.isEmpty
@@ -110,7 +148,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                           parent: BouncingScrollPhysics(),
                         ),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
+                          horizontal: 20,
                           vertical: 20,
                         ),
                         children: [
@@ -119,13 +157,12 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: favorites.length,
-                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
+                            gridDelegate:
+                                SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: width < 520 ? 9999 : 360,
                               mainAxisSpacing: 14,
                               crossAxisSpacing: 14,
-                              // Taller cards so the image + chip + title + buttons
-                              // fit without overflow on small Android screens.
-                              childAspectRatio: 0.62,
+                              childAspectRatio: width < 520 ? 0.78 : 0.72,
                             ),
                             itemBuilder: (context, index) {
                               return _buildFavoriteGridCard(favorites[index]);
@@ -150,8 +187,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            cs.primary.withOpacity(0.18),
-            cs.tertiary.withOpacity(0.13),
+            cs.primary.withValues(alpha: 0.18),
+            cs.tertiary.withValues(alpha: 0.13),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -160,8 +197,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         border: Border.all(color: cs.outlineVariant),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(
-              Theme.of(context).brightness == Brightness.dark ? 0.28 : 0.05,
+            color: Colors.black.withValues(
+              alpha: Theme.of(context).brightness == Brightness.dark ? 0.28 : 0.05,
             ),
             blurRadius: 16,
             offset: const Offset(0, 8),
@@ -173,7 +210,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: cs.surface.withOpacity(0.88),
+              color: cs.surface.withValues(alpha: 0.88),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: cs.outlineVariant),
             ),
@@ -185,7 +222,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "Saved Recipes",
+                  'Saved Recipes',
                   style: TextStyle(
                     color: cs.onSurface,
                     fontSize: 18,
@@ -194,7 +231,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  "You have ${favorites.length} favorites ready to cook.",
+                  'You have ${favorites.length} favorites ready to cook.',
                   style: TextStyle(
                     color: cs.onSurfaceVariant,
                     fontWeight: FontWeight.w600,
@@ -221,8 +258,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(
-                    Theme.of(context).brightness == Brightness.dark ? 0.3 : 0.03,
+                  color: Colors.black.withValues(
+                    alpha: Theme.of(context).brightness == Brightness.dark ? 0.3 : 0.03,
                   ),
                   blurRadius: 20,
                 ),
@@ -236,7 +273,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           ),
           const SizedBox(height: 24),
           Text(
-            "Your list is empty",
+            'Your list is empty',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w900,
@@ -245,7 +282,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            "Discover recipes and save them here for later.",
+            'Discover recipes and save them here for later.',
             style: TextStyle(
               fontSize: 14,
               color: cs.onSurfaceVariant,
@@ -257,300 +294,130 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
-  Widget _buildFavoriteCard(Recipe recipe) {
+  Widget _buildFavoriteGridCard(Recipe recipe) {
     final cs = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
-        ),
+
+    return Material(
+      color: cs.surfaceContainerHigh,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: cs.outlineVariant),
       ),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 20),
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: cs.outlineVariant),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(
-                Theme.of(context).brightness == Brightness.dark ? 0.3 : 0.03,
-              ),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openRecipe(recipe),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // --- RECIPE IMAGE ---
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(23),
-              ),
+            AspectRatio(
+              aspectRatio: 16 / 10,
               child: RecipeImage(
                 recipeId: recipe.id,
                 imageUrl: recipe.imageUrl,
-                height: 200,
-                width: double.infinity,
                 fit: BoxFit.cover,
-                memCacheWidth: 600,
+                width: double.infinity,
+                memCacheWidth: 400,
               ),
             ),
-
-            // --- INFO PADDING ---
             Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (recipe.category != null && recipe.category!.trim().isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: cs.primary.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            recipe.category!.toUpperCase(),
-                            style: TextStyle(
-                              color: cs.primary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
+                      if (recipe.category != null &&
+                          recipe.category!.trim().isNotEmpty)
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
                             ),
-                          ),
-                        ),
-                      if (recipe.rating != null)
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.star_rounded,
-                              color: warningAmber,
-                              size: 18,
+                            decoration: BoxDecoration(
+                              color: cs.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                            const SizedBox(width: 4),
-                            Text(
-                              recipe.rating!.toStringAsFixed(1),
+                            child: Text(
+                              recipe.category!.toUpperCase(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
+                                color: cs.primary,
+                                fontSize: 10,
                                 fontWeight: FontWeight.w800,
-                                color: cs.onSurface,
-                                fontSize: 14,
+                                letterSpacing: 0.3,
                               ),
                             ),
-                          ],
+                          ),
                         ),
+                      const Spacer(),
+                      _buildRatingBadge(recipe),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   Text(
                     recipe.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
                       color: cs.onSurface,
-                      letterSpacing: -0.5,
+                      fontSize: 15,
+                      height: 1.2,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 10),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      OutlinedButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => _openRecipe(recipe),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: cs.primary,
+                            side: BorderSide(color: cs.primary.withValues(alpha: 0.5)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            minimumSize: const Size(0, 38),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          "OPEN",
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12,
-                            letterSpacing: 0.4,
+                          child: const Text(
+                            'OPEN',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                              letterSpacing: 0.4,
+                            ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      TextButton.icon(
-                        onPressed: () => removeFavorite(recipe.id),
-                        icon: const Icon(
-                          Icons.delete_outline_rounded,
-                          size: 18,
-                        ),
-                        label: const Text("REMOVE"),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.redAccent,
-                          backgroundColor: Colors.redAccent.withOpacity(0.08),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 12,
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 38,
+                        height: 38,
+                        child: IconButton(
+                          tooltip: 'Remove from favorites',
+                          onPressed: () => removeFavorite(recipe.id),
+                          padding: EdgeInsets.zero,
+                          iconSize: 18,
+                          color: Colors.redAccent,
+                          style: IconButton.styleFrom(
+                            backgroundColor:
+                                Colors.redAccent.withValues(alpha: 0.12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          textStyle: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
+                          icon: const Icon(Icons.close_rounded),
                         ),
                       ),
                     ],
                   ),
                 ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFavoriteGridCard(Recipe recipe) {
-    final cs = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
-        ),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: cs.outlineVariant),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(
-                Theme.of(context).brightness == Brightness.dark ? 0.26 : 0.04,
-              ),
-              blurRadius: 14,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 5,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
-                child: RecipeImage(
-                  recipeId: recipe.id,
-                  imageUrl: recipe.imageUrl,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  memCacheWidth: 320,
-                ),
-              ),
-            ),
-            Expanded(
-              flex: 5,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (recipe.category != null && recipe.category!.trim().isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: cs.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                        child: Text(
-                          recipe.category!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: cs.primary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 6),
-                    Text(
-                      recipe.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurface,
-                        fontSize: 14.5,
-                        height: 1.2,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const Spacer(),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => RecipeDetailScreen(recipeId: recipe.id, initialRecipe: recipe),
-                              ),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 6),
-                              minimumSize: const Size(0, 32),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(9),
-                              ),
-                            ),
-                            child: const Text(
-                              "OPEN",
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        SizedBox(
-                          height: 32,
-                          width: 32,
-                          child: IconButton(
-                            tooltip: 'Remove',
-                            onPressed: () => removeFavorite(recipe.id),
-                            padding: EdgeInsets.zero,
-                            iconSize: 18,
-                            color: Colors.redAccent,
-                            style: IconButton.styleFrom(
-                              backgroundColor: Colors.redAccent.withOpacity(0.08),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(9),
-                              ),
-                            ),
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
               ),
             ),
           ],

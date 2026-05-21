@@ -33,7 +33,7 @@ class CategoryStat {
   factory CategoryStat.fromJson(Map<String, dynamic> json) {
     return CategoryStat(
       category: json['category'] ?? 'Uncategorized',
-      count: json['count'] ?? 0,
+      count: int.tryParse('${json['count']}') ?? 0,
     );
   }
 }

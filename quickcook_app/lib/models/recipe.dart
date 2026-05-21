@@ -8,6 +8,7 @@ class Recipe {
   final String? imageUrl;
   final String? category;
   final double? rating;
+  final int ratingsCount;
   final int? userRating;
 
   /// Ingredient match flow (match-recipes API).
@@ -28,6 +29,7 @@ class Recipe {
     this.imageUrl,
     this.category,
     this.rating,
+    this.ratingsCount = 0,
     this.userRating,
     this.matchCoveragePct,
     this.missingIngredientsApprox,
@@ -36,6 +38,31 @@ class Recipe {
     this.difficulty,
     this.cookingTimeMinutes,
   });
+
+  Recipe copyWith({
+    double? rating,
+    int? ratingsCount,
+    int? userRating,
+    bool clearUserRating = false,
+  }) {
+    return Recipe(
+      id: id,
+      name: name,
+      instructions: instructions,
+      ingredients: ingredients,
+      imageUrl: imageUrl,
+      category: category,
+      rating: rating ?? this.rating,
+      ratingsCount: ratingsCount ?? this.ratingsCount,
+      userRating: clearUserRating ? null : (userRating ?? this.userRating),
+      matchCoveragePct: matchCoveragePct,
+      missingIngredientsApprox: missingIngredientsApprox,
+      successScore: successScore,
+      successLabel: successLabel,
+      difficulty: difficulty,
+      cookingTimeMinutes: cookingTimeMinutes,
+    );
+  }
 
   /// Lightweight thumbnail URL for list/grid cards.
   ///
@@ -88,6 +115,9 @@ class Recipe {
       rating: json['average_rating'] != null
           ? double.tryParse(json['average_rating'].toString())
           : null,
+      ratingsCount: json['ratings_count'] is int
+          ? json['ratings_count'] as int
+          : int.tryParse(json['ratings_count']?.toString() ?? '0') ?? 0,
       userRating: json['user_rating'] != null
           ? int.tryParse(json['user_rating'].toString())
           : null,
@@ -113,6 +143,7 @@ class Recipe {
         'image_url': imageUrl,
         'category': category,
         'average_rating': rating,
+        'ratings_count': ratingsCount,
         if (userRating != null) 'user_rating': userRating,
         if (matchCoveragePct != null)
           'match_coverage_pct': matchCoveragePct,

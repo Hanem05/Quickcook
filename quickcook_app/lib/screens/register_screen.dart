@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // <--- ADDED for inputFormatters
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../utils/varchar_limits.dart';
+import '../widgets/terms_acceptance_row.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -19,9 +21,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final passwordController = TextEditingController();
 
   bool isLoading = false;
+  bool _acceptedTerms = false;
 
   void register() async {
     if (!_formKey.currentState!.validate()) return;
+
+    if (!_acceptedTerms) {
+      AppMessage.show(
+        context,
+        text: 'Please accept the Terms & Regulations to create an account.',
+        type: AppMessageType.error,
+      );
+      return;
+    }
 
     setState(() => isLoading = true);
 
@@ -196,11 +208,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   fontWeight: FontWeight.w600,
                                 ),
                                 textCapitalization: TextCapitalization.words,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x20-\x7E]'),
-                                  ),
-                                ],
+                                maxLength: kDbVarchar255,
+                                inputFormatters: varchar255AsciiFormatters(),
                                 decoration: InputDecoration(
                                   hintText: "Full Name",
                                   filled: true,
@@ -213,11 +222,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     borderRadius: BorderRadius.circular(14),
                                     borderSide: BorderSide.none,
                                   ),
+                                  counterText: '',
                                 ),
                                 validator: (value) {
-                                  if (value == null || value.isEmpty) return "Name is required";
-                                  if (value.length < 2) return "Minimum 2 characters";
-                                  return null;
+                                  if (value == null || value.isEmpty) {
+                                    return 'Name is required';
+                                  }
+                                  if (value.length < 2) {
+                                    return 'Minimum 2 characters';
+                                  }
+                                  return validateVarchar255(
+                                    value,
+                                    fieldLabel: 'Full name',
+                                  );
                                 },
                               ),
 
@@ -230,11 +247,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   fontWeight: FontWeight.w600,
                                 ),
                                 keyboardType: TextInputType.emailAddress,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x20-\x7E]'),
-                                  ),
-                                ],
+                                maxLength: kDbVarchar255,
+                                inputFormatters: varchar255AsciiFormatters(),
                                 decoration: InputDecoration(
                                   hintText: "Email Address",
                                   filled: true,
@@ -247,11 +261,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     borderRadius: BorderRadius.circular(14),
                                     borderSide: BorderSide.none,
                                   ),
+                                  counterText: '',
                                 ),
                                 validator: (value) {
-                                  if (value == null || value.isEmpty) return "Email is required";
-                                  if (!value.contains("@")) return "Please enter a valid email";
-                                  return null;
+                                  if (value == null || value.isEmpty) {
+                                    return 'Email is required';
+                                  }
+                                  if (!value.contains('@')) {
+                                    return 'Please enter a valid email';
+                                  }
+                                  return validateVarchar255(
+                                    value,
+                                    fieldLabel: 'Email',
+                                  );
                                 },
                               ),
 
@@ -260,15 +282,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               TextFormField(
                                 controller: passwordController,
                                 obscureText: true,
+                                maxLength: kDbVarchar255,
+                                inputFormatters: varchar255AsciiFormatters(),
                                 style: TextStyle(
                                   color: cs.onSurface,
                                   fontWeight: FontWeight.w600,
                                 ),
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x20-\x7E]'),
-                                  ),
-                                ],
                                 decoration: InputDecoration(
                                   hintText: "Password",
                                   filled: true,
@@ -281,13 +300,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     borderRadius: BorderRadius.circular(14),
                                     borderSide: BorderSide.none,
                                   ),
+                                  counterText: '',
                                 ),
                                 onFieldSubmitted: (_) => register(),
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) return "Password is required";
-                                  if (value.length < 6) return "Minimum 6 characters";
-                                  return null;
-                                },
+                                validator: validatePassword255,
+                              ),
+
+                              const SizedBox(height: 12),
+                              TermsAcceptanceRow(
+                                value: _acceptedTerms,
+                                onChanged: (v) =>
+                                    setState(() => _acceptedTerms = v == true),
+                                onViewTerms: () =>
+                                    TermsAcceptanceRow.showTermsDialog(context),
                               ),
 
                               const SizedBox(height: 20),

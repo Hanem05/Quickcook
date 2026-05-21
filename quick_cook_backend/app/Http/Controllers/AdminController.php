@@ -22,14 +22,30 @@ class AdminController extends Controller
             $data = Cache::remember('admin_stats:v'.$version, 300, function () {
                 $totalUsers = User::count();
                 $totalRecipes = Recipe::count();
-                $categoryStats = Recipe::select('category', DB::raw('count(*) as count'))
+                $categoryRows = Recipe::select('category', DB::raw('count(*) as count'))
                     ->groupBy('category')
                     ->get();
+
+                $mergedCategories = [];
+                foreach ($categoryRows as $row) {
+                    $label = trim((string) ($row->category ?? ''));
+                    if ($label === '') {
+                        $label = 'Uncategorized';
+                    }
+                    if (strcasecmp($label, 'Snacks') === 0) {
+                        $label = 'Snack';
+                    }
+                    $key = strtolower($label);
+                    if (! isset($mergedCategories[$key])) {
+                        $mergedCategories[$key] = ['category' => $label, 'count' => 0];
+                    }
+                    $mergedCategories[$key]['count'] += (int) $row->count;
+                }
 
                 return [
                     'total_users' => $totalUsers,
                     'total_recipes' => $totalRecipes,
-                    'category_distribution' => $categoryStats,
+                    'category_distribution' => array_values($mergedCategories),
                 ];
             });
 

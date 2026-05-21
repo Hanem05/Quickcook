@@ -86,6 +86,11 @@ class OfflineCacheService {
     return p.getString('$_recipeDetailPrefix$id');
   }
 
+  static Future<void> clearRecipeDetailJson(int id) async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove('$_recipeDetailPrefix$id');
+  }
+
   static Future<void> enqueuePendingActivity(Map<String, dynamic> payload) async {
     final p = await SharedPreferences.getInstance();
     final raw = p.getString(_pendingActivitiesKey);

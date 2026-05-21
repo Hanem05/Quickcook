@@ -431,36 +431,48 @@ class _ChatAssistantScreenState extends State<ChatAssistantScreen> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _messageController,
+                      minLines: 1,
+                      maxLines: 4,
                       textInputAction: TextInputAction.send,
                       onSubmitted: _sendMessage,
                       decoration: const InputDecoration(
-                        hintText: "Ask anything about recipes...",
-                        prefixIcon: Icon(Icons.chat_bubble_outline_rounded),
+                        hintText: 'Ask anything about recipes...',
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   SizedBox(
-                    height: 48,
-                    child: ElevatedButton.icon(
+                    width: 52,
+                    height: 52,
+                    child: FilledButton(
                       onPressed: _sending
                           ? null
                           : () => _sendMessage(_messageController.text),
-                      icon: _sending
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
+                      style: FilledButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: _sending
+                          ? SizedBox(
+                              width: 22,
+                              height: 22,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: cs.onPrimary,
                               ),
                             )
-                          : const Icon(Icons.send_rounded, size: 18),
-                      label: Text(_sending ? "Sending" : "Send"),
+                          : Icon(Icons.send_rounded, color: cs.onPrimary),
                     ),
                   ),
                 ],

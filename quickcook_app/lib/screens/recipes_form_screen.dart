@@ -1,14 +1,19 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/ingredient.dart';
 import '../models/recipe.dart';
 import '../services/api_service.dart';
+import '../utils/recipe_image_resolver.dart';
+import '../theme/app_colors.dart';
+import '../widgets/recipe_image.dart';
 
 class RecipeFormScreen extends StatefulWidget {
   final Recipe? recipe;
+  final int? recipeId;
 
-  const RecipeFormScreen({super.key, this.recipe});
+  const RecipeFormScreen({super.key, this.recipe, this.recipeId});
 
   @override
   State<RecipeFormScreen> createState() => _RecipeFormScreenState();
@@ -37,13 +42,13 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
   String? instructionsError;
   String? cookingTimeError;
 
-  static const Color primaryBrand = Color(0xFFC2410C);
-  static const Color darkSlate = Color(0xFF18181B);
-  static const Color bgSoft = Color(0xFFF4F4F5);
-  static const Color surfaceWhite = Color(0xFFFFFFFF);
-  static const Color borderLight = Color(0xFFE4E4E7);
-  static const Color textMain = Color(0xFF27272A);
-  static const Color textMuted = Color(0xFF71717A);
+  static const Color primaryBrand = AppColors.brand;
+  static const Color darkSlate = AppColors.darkSlate;
+  static const Color bgSoft = AppColors.bgSoft;
+  static const Color surfaceWhite = AppColors.surfaceWhite;
+  static const Color borderLight = AppColors.borderLight;
+  static const Color textMain = AppColors.textMain;
+  static const Color textMuted = AppColors.textMuted;
 
   final List<String> categories = [
     'Breakfast',
@@ -78,7 +83,37 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
     } else {
       ingredientEntries = <String>[];
     }
-    _loadDbIngredients();
+    unawaited(_loadDbIngredients());
+    unawaited(_hydrateRecipeForEdit());
+  }
+
+  Future<void> _hydrateRecipeForEdit() async {
+    final id = widget.recipeId ?? widget.recipe?.id;
+    if (id == null) return;
+    final needsDetail =
+        widget.recipe == null || widget.recipe!.ingredients.isEmpty;
+    if (!needsDetail && widget.recipe != null) return;
+
+    try {
+      final full = await ApiService.fetchRecipeDetail(id);
+      if (!mounted) return;
+      setState(() {
+        nameController.text = full.name;
+        instructionsController.text = full.instructions;
+        _existingImageUrl = RecipeImageResolver.networkUrl(full.imageUrl);
+        ingredientEntries = full.ingredients
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList();
+        if (categories.contains(full.category)) {
+          selectedCategory = full.category!;
+        }
+        selectedDifficulty = full.difficulty ?? 'medium';
+        cookingTimeController.text =
+            (full.cookingTimeMinutes ?? 30).toString();
+      });
+    } catch (_) {}
   }
 
   @override
@@ -212,13 +247,19 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
     _validateInstructions(instructionsController.text);
     _validateCookingTime(cookingTimeController.text);
 
+    final isNew = widget.recipe == null && widget.recipeId == null;
+    final missingImage =
+        isNew && _pickedImage == null && (_existingImageUrl == null || _existingImageUrl!.isEmpty);
+
     if (nameError != null ||
         instructionsError != null ||
         cookingTimeError != null ||
         (ingredientEntries ?? const <String>[]).isEmpty ||
-        (_existingImageUrl == null && _pickedImage == null)) {
+        missingImage) {
       _showSnackBar(
-        "Please fix highlighted fields, add ingredients, and upload an image.",
+        isNew
+            ? "Please fix highlighted fields, add ingredients, and upload an image."
+            : "Please fix highlighted fields and add at least one ingredient.",
         isError: true,
       );
       return;
@@ -238,8 +279,12 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
           imageFile: _pickedImage,
         );
       } else {
+        final id = widget.recipe?.id ?? widget.recipeId;
+        if (id == null) {
+          throw Exception('Missing recipe id');
+        }
         await ApiService.updateRecipe(
-          id: widget.recipe!.id,
+          id: id,
           name: nameController.text,
           category: selectedCategory,
           instructions: instructionsController.text,
@@ -328,25 +373,29 @@ class _RecipeFormScreenState extends State<RecipeFormScreen> {
                                 offset: const Offset(0, 4),
                               ),
                             ],
-                            image: _existingImageUrl != null
+                            image: _imageBytes != null
                                 ? DecorationImage(
-                                    image: NetworkImage(_existingImageUrl!),
+                                    image: MemoryImage(_imageBytes!),
                                     fit: BoxFit.cover,
                                   )
-                                : (_imageBytes != null
-                                      ? DecorationImage(
-                                          image: MemoryImage(_imageBytes!),
-                                          fit: BoxFit.cover,
-                                        )
-                                      : null),
+                                : null,
                           ),
-                          child:
-                              (_existingImageUrl == null && _imageBytes == null)
-                              ? const Icon(
-                                  Icons.restaurant_menu_rounded,
-                                  size: 50,
-                                  color: textMuted,
-                                )
+                          child: _imageBytes == null
+                              ? (widget.recipe != null || widget.recipeId != null)
+                                  ? ClipOval(
+                                      child: RecipeImage(
+                                        recipeId: widget.recipe?.id ?? widget.recipeId ?? 0,
+                                        imageUrl: _existingImageUrl,
+                                        width: 140,
+                                        height: 140,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.restaurant_menu_rounded,
+                                      size: 50,
+                                      color: textMuted,
+                                    )
                               : null,
                         ),
                         Positioned(

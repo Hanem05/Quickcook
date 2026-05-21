@@ -46,7 +46,10 @@ class SearchController extends Controller
             ->where(function ($q) use ($like) {
                 $q->where('name', 'LIKE', $like)
                     ->orWhere('instructions', 'LIKE', $like)
-                    ->orWhere('category', 'LIKE', $like);
+                    ->orWhere('category', 'LIKE', $like)
+                    ->orWhereHas('ingredients', function ($iq) use ($like) {
+                        $iq->where('ingredients.name', 'LIKE', $like);
+                    });
             })
             ->limit(40)
             ->get();

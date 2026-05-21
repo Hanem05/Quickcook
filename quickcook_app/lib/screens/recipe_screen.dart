@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/recipe.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../theme/app_colors.dart';
 import '../widgets/recipe_image.dart';
 import 'recipe_detail_screen.dart';
 
@@ -84,8 +85,8 @@ class _RecipeScreenState extends State<RecipeScreen> {
   String selectedSort = "Recommended";
 
   // --- MODERN TEAL & ZINC PALETTE ---
-  static const Color primaryBrand = Color(0xFFC2410C);
-  static const Color warningAmber = Color(0xFFF59E0B);
+  static const Color primaryBrand = AppColors.brand;
+  static const Color warningAmber = AppColors.warningAmber;
 
   @override
   void initState() {

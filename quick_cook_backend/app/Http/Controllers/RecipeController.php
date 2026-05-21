@@ -133,11 +133,12 @@ class RecipeController extends Controller
     }
 
     /**
-     * GET ALL RECIPES (Admin Panel)
+     * GET ALL RECIPES (Admin Panel + compact browse grid)
      */
     public function index()
     {
-        $compact = (int) request()->query('compact', 0) === 1;
+        $adminList = (int) request()->query('admin_list', 0) === 1;
+        $compact = $adminList || (int) request()->query('compact', 0) === 1;
         $page = max(1, (int) request()->query('page', 1));
         $category = request()->query('category');
         $difficulty = request()->query('difficulty');
@@ -146,63 +147,55 @@ class RecipeController extends Controller
         $maxCookingTime = (int) request()->query('max_cooking_time', 0);
         $perPage = min(500, max(5, (int) request()->query('per_page', 25)));
 
-        $key = 'recipes:v'.$this->recipesCacheVersion().':'.md5(json_encode([
-            'category' => $category,
-            'difficulty' => $difficulty,
-            'q' => $q,
-            'ingredient_ids' => $ingredientIds,
-            'max_cooking_time' => $maxCookingTime,
-            'page' => $page,
-            'per_page' => $perPage,
-            'compact' => $compact ? 1 : 0,
-        ]));
+        $hasSearch = $q !== ''
+            || (is_array($ingredientIds) && $ingredientIds !== []);
+        $fastSearch = $compact && ! $adminList && $q !== '';
 
-        $recipes = Cache::remember($key, now()->addMinutes(5), function () use ($category, $difficulty, $q, $ingredientIds, $maxCookingTime, $perPage, $compact) {
-            $query = Recipe::query()->orderByDesc('id');
+        $resolve = fn () => $this->paginateRecipeIndex(
+            $category,
+            $difficulty,
+            $q,
+            $ingredientIds,
+            $maxCookingTime,
+            $perPage,
+            $compact,
+            $adminList,
+            $fastSearch,
+        );
 
-            if (! $compact) {
-                $query->with('ingredients');
-            } else {
-                $query->select([
-                    'id',
-                    'name',
-                    'category',
-                    'difficulty',
-                    'cooking_time',
-                    'image',
-                ]);
-            }
-            $query->withAvg('ratings as average_rating', 'rating');
-
-            if (is_string($category) && $category !== '') {
-                $query->where('category', $category);
-            }
-            if (is_string($difficulty) && in_array($difficulty, ['easy', 'medium', 'hard'], true)) {
-                $query->where('difficulty', $difficulty);
-            }
-            if ($q !== '') {
-                $query->where(function ($builder) use ($q) {
-                    $builder
-                        ->where('name', 'like', '%'.$q.'%')
-                        ->orWhere('category', 'like', '%'.$q.'%');
-                });
-            }
-            if ($maxCookingTime > 0) {
-                $query->where('cooking_time', '<=', $maxCookingTime);
-            }
-            if (is_array($ingredientIds) && $ingredientIds !== []) {
-                $ids = array_values(array_unique(array_map(static fn ($v): int => (int) $v, $ingredientIds)));
-                $query->whereHas('ingredients', function ($q) use ($ids) {
-                    $q->whereIn('ingredients.id', $ids);
-                }, '>=', count($ids));
-            }
-
-            return $query->paginate($perPage);
-        });
+        // Fast browse search: short cache. Other filtered queries run live.
+        $recipes = $fastSearch
+            ? Cache::remember(
+                'recipes:fastsearch:v'.$this->recipesCacheVersion().':'.md5(json_encode([
+                    'category' => $category,
+                    'q' => $q,
+                    'page' => $page,
+                    'per_page' => $perPage,
+                ])),
+                now()->addSeconds(90),
+                $resolve
+            )
+            : ($hasSearch
+                ? $resolve()
+                : Cache::remember(
+                'recipes:v'.$this->recipesCacheVersion().':'.md5(json_encode([
+                    'category' => $category,
+                    'difficulty' => $difficulty,
+                    'q' => $q,
+                    'ingredient_ids' => $ingredientIds,
+                    'max_cooking_time' => $maxCookingTime,
+                    'page' => $page,
+                    'per_page' => $perPage,
+                    'compact' => $compact ? 1 : 0,
+                    'admin_list' => $adminList ? 1 : 0,
+                ])),
+                now()->addMinutes($compact ? 30 : 5),
+                $resolve
+            ));
 
         if ($compact && $recipes instanceof \Illuminate\Pagination\LengthAwarePaginator) {
             $recipes->setCollection(
-                $recipes->getCollection()->map(function (Recipe $recipe) {
+                $recipes->getCollection()->map(function (Recipe $recipe) use ($adminList) {
                     return [
                         'id' => $recipe->id,
                         'name' => $recipe->name,
@@ -212,16 +205,101 @@ class RecipeController extends Controller
                         'image_url' => $recipe->image_url,
                         'image' => $recipe->image_url,
                         'ingredients' => [],
-                        'instructions' => '',
-                        'average_rating' => $recipe->average_rating !== null
-                            ? round((float) $recipe->average_rating, 1)
-                            : 0.0,
+                        'instructions' => $adminList
+                            ? Str::limit((string) ($recipe->instructions ?? ''), 200)
+                            : '',
+                        'average_rating' => round((float) ($recipe->average_rating ?? 0), 1),
+                        'ratings_count' => (int) ($recipe->ratings_count ?? 0),
                     ];
                 })
             );
         }
 
         return response()->json($recipes);
+    }
+
+    /**
+     * @param  mixed  $category
+     * @param  mixed  $difficulty
+     * @param  mixed  $ingredientIds
+     */
+    protected function paginateRecipeIndex(
+        $category,
+        $difficulty,
+        string $q,
+        $ingredientIds,
+        int $maxCookingTime,
+        int $perPage,
+        bool $compact,
+        bool $adminList,
+        bool $fastSearch = false,
+    ): \Illuminate\Contracts\Pagination\LengthAwarePaginator {
+        $query = Recipe::query();
+
+        if ($q !== '') {
+            $query->orderBy('name');
+        } else {
+            $query->orderByDesc('id');
+        }
+
+        if (! $compact) {
+            $query->with('ingredients');
+        } else {
+            $columns = [
+                'recipes.id',
+                'recipes.name',
+                'recipes.category',
+                'recipes.difficulty',
+                'recipes.cooking_time',
+                'recipes.image',
+            ];
+            if ($adminList) {
+                $columns[] = 'recipes.instructions';
+            }
+            $query->select($columns);
+        }
+
+        if (! $fastSearch) {
+            $query->withCount('ratings')->withAvg('ratings as average_rating', 'rating');
+        }
+
+        if (is_string($category) && $category !== '' && strcasecmp($category, 'All') !== 0) {
+            $query->where('category', $category);
+        }
+        if (is_string($difficulty) && in_array($difficulty, ['easy', 'medium', 'hard'], true)) {
+            $query->where('difficulty', $difficulty);
+        }
+        if ($q !== '') {
+            $like = '%'.$q.'%';
+            $ingredientRecipeIds = DB::table('recipe_ingredient')
+                ->join('ingredients', 'ingredients.id', '=', 'recipe_ingredient.ingredient_id')
+                ->where('ingredients.name', 'like', $like)
+                ->distinct()
+                ->pluck('recipe_ingredient.recipe_id');
+
+            $query->where(function ($builder) use ($like, $adminList, $ingredientRecipeIds) {
+                $builder
+                    ->where('recipes.name', 'like', $like)
+                    ->orWhere('recipes.category', 'like', $like);
+                if ($ingredientRecipeIds->isNotEmpty()) {
+                    $builder->orWhereIn('recipes.id', $ingredientRecipeIds);
+                }
+                if ($adminList) {
+                    $builder->orWhere('instructions', 'like', $like);
+                }
+            });
+        }
+        if ($maxCookingTime > 0) {
+            $query->where('cooking_time', '<=', $maxCookingTime);
+        }
+        if (is_array($ingredientIds) && $ingredientIds !== []) {
+            $ids = array_values(array_unique(array_map(static fn ($v): int => (int) $v, $ingredientIds)));
+            $query->whereHas('ingredients', function ($iq) use ($ids) {
+                $iq->whereIn('ingredients.id', $ids);
+            }, '>=', count($ids));
+        }
+
+        return $query->paginate($perPage);
     }
 
     /**
@@ -1548,6 +1626,7 @@ class RecipeController extends Controller
             'image_url' => $recipe->image_url,
             'ingredients' => $recipe->ingredients->pluck('name'),
             'average_rating' => round((float) ($recipe->ratings()->avg('rating') ?? 0), 1),
+            'ratings_count' => $recipe->ratings()->count(),
             'user_rating' => $userRating !== null ? (int) $userRating : null,
             'success_score' => $prediction['score'],
             'success_label' => $prediction['label'],
@@ -1678,12 +1757,16 @@ class RecipeController extends Controller
             }
 
             $this->bumpRecipeRelatedCache();
-            ProcessRecipeImageJob::dispatch((int) $recipe->id)->onQueue('default');
-            WarmRecommendationCacheJob::dispatch($request->user()?->id ? (int) $request->user()->id : null)->onQueue('default');
+            ProcessRecipeImageJob::dispatch((int) $recipe->id)->afterResponse();
 
             return response()->json([
                 'message' => 'Recipe created successfully',
-                'recipe' => $recipe->load('ingredients'),
+                'recipe' => [
+                    'id' => $recipe->id,
+                    'name' => $recipe->name,
+                    'category' => $recipe->category,
+                    'image_url' => $recipe->image_url,
+                ],
             ], 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
@@ -1760,13 +1843,17 @@ class RecipeController extends Controller
 
             $this->bumpRecipeRelatedCache();
             if ($request->hasFile('image')) {
-                ProcessRecipeImageJob::dispatch((int) $recipe->id)->onQueue('default');
+                ProcessRecipeImageJob::dispatch((int) $recipe->id)->afterResponse();
             }
-            WarmRecommendationCacheJob::dispatch($request->user()?->id ? (int) $request->user()->id : null)->onQueue('default');
 
             return response()->json([
                 'message' => 'Recipe updated successfully',
-                'recipe' => $recipe,
+                'recipe' => [
+                    'id' => $recipe->id,
+                    'name' => $recipe->name,
+                    'category' => $recipe->category,
+                    'image_url' => $recipe->image_url,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([

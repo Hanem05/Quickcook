@@ -26,7 +26,7 @@ class AuthController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:6',
+            'password' => 'required|string|min:6|max:255',
         ]);
 
         $user = User::create([
@@ -50,8 +50,8 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email',
-            'password' => 'required'
+            'email' => 'required|string|email|max:255',
+            'password' => 'required|string|max:255',
         ]);
 
         $user = User::where('email', $request->email)->first();
@@ -102,7 +102,7 @@ class AuthController extends Controller
         $request->validate([
             'token' => 'required|string',
             'email' => 'required|email',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => 'required|string|min:8|max:255|confirmed',
         ]);
 
         $status = Password::reset(

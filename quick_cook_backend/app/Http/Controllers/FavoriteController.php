@@ -59,19 +59,46 @@ class FavoriteController extends Controller
 
     public function index(Request $request)
     {
-        // Tell Laravel to get the favorites, AND inside that recipe, 
-        // load the ingredients and calculate the average rating!
         $favorites = $request->user()
             ->favorites()
             ->with(['recipe' => function ($query) {
-                $query->with('ingredients')
+                $query
+                    ->select('recipes.*')
+                    ->withCount('ratings')
                     ->withAvg('ratings as average_rating', 'rating');
             }])
+            ->orderByDesc('id')
             ->get();
 
-        // Returning exactly as it was originally so Flutter doesn't break, 
-        // but now the data is fully loaded with ingredients and ratings!
-        return response()->json($favorites);
+        $payload = $favorites->map(function (Favorite $favorite) {
+            $recipe = $favorite->recipe;
+            if ($recipe === null) {
+                return null;
+            }
+
+            return [
+                'id' => $favorite->id,
+                'user_id' => $favorite->user_id,
+                'recipe_id' => $favorite->recipe_id,
+                'recipe' => [
+                    'id' => $recipe->id,
+                    'name' => $recipe->name,
+                    'category' => $recipe->category,
+                    'difficulty' => $recipe->difficulty ?? 'medium',
+                    'cooking_time' => (int) ($recipe->cooking_time ?? 30),
+                    'image' => $recipe->image_url,
+                    'image_url' => $recipe->image_url,
+                    'instructions' => '',
+                    'ingredients' => [],
+                    'average_rating' => $recipe->average_rating !== null
+                        ? round((float) $recipe->average_rating, 1)
+                        : 0.0,
+                    'ratings_count' => (int) ($recipe->ratings_count ?? 0),
+                ],
+            ];
+        })->filter()->values();
+
+        return response()->json($payload);
     }
 
     public function destroy(Request $request, $id)

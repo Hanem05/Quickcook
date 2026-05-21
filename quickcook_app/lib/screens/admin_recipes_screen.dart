@@ -13,6 +13,8 @@ import 'create_user_screen.dart';
 import 'login_screen.dart';
 import '../models/admin_stats.dart';
 import '../widgets/recipe_image.dart';
+import '../theme/app_colors.dart';
+import '../widgets/app_pagination_bar.dart';
 
 class AdminRecipesScreen extends StatefulWidget {
   const AdminRecipesScreen({super.key});
@@ -46,11 +48,15 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   Map<String, dynamic>? activityStats;
   int totalUsers = 0;
   int totalRecipes = 0;
+  int _catalogRecipeTotal = 0;
   bool _hasFetched = false;
 
+  static const int _kActivityPerPage = 10;
+
   int _activityPage = 1;
+  int _activityLastPage = 1;
+  int _activityTotal = 0;
   bool _isLoadingMore = false;
-  bool _hasMoreActivity = true;
 
   String? _selectedInsightDate;
   String? _selectedInsightMonth;
@@ -87,29 +93,29 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   int _userSearchMode = 0; // 0=all, 1=first name, 2=surname
 
   // --- PREMIUM BRAND COLORS ---
-  static const Color primaryBrand = Color(0xFFC2410C);
-  static const Color primaryBrandLight = Color(0xFFFBBF24);
-  static const Color darkSlate = Color(0xFF18181B);
-  static const Color bgSoft = Color(0xFFF4F4F5);
-  static const Color surfaceWhite = Color(0xFFFFFFFF);
-  static const Color borderLight = Color(0xFFE4E4E7);
-  static const Color textMain = Color(0xFF27272A);
-  static const Color textMuted = Color(0xFF71717A);
-  static const Color dangerRed = Color(0xFFEF4444);
-  static const Color successEmerald = Color(0xFF10B981);
-  static const Color warningAmber = Color(0xFFF59E0B);
-  static const Color infoBlue = Color(0xFF0EA5E9);
+  static const Color primaryBrand = AppColors.brand;
+  static const Color primaryBrandLight = AppColors.brandLight;
+  static const Color darkSlate = AppColors.darkSlate;
+  static const Color bgSoft = AppColors.bgSoft;
+  static const Color surfaceWhite = AppColors.surfaceWhite;
+  static const Color borderLight = AppColors.borderLight;
+  static const Color textMain = AppColors.textMain;
+  static const Color textMuted = AppColors.textMuted;
+  static const Color dangerRed = AppColors.dangerRed;
+  static const Color successEmerald = AppColors.successEmerald;
+  static const Color warningAmber = AppColors.warningAmber;
+  static const Color infoBlue = AppColors.accent;
 
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
-  Color get _pageBg => _isDark ? const Color(0xFF0F0F12) : bgSoft;
-  Color get _panelBg => _isDark ? const Color(0xFF1A1A1E) : surfaceWhite;
-  Color get _panelBorder => _isDark ? const Color(0xFF2F2F36) : borderLight;
-  Color get _mainText => _isDark ? const Color(0xFFE4E4E7) : textMain;
-  Color get _mutedText => _isDark ? const Color(0xFFB0B0BA) : textMuted;
-  Color get _sidebarBg => _isDark ? const Color(0xFF0B0B0E) : darkSlate;
+  Color get _pageBg => _isDark ? AppColors.surfaceDark : bgSoft;
+  Color get _panelBg => _isDark ? AppColors.surfaceDarkContainer : surfaceWhite;
+  Color get _panelBorder => _isDark ? AppColors.outlineVariantDark : borderLight;
+  Color get _mainText => _isDark ? AppColors.onSurfaceDark : textMain;
+  Color get _mutedText => _isDark ? AppColors.onSurfaceVariantDark : textMuted;
+  Color get _sidebarBg => _isDark ? AppColors.surfaceDarkLowest : darkSlate;
   Color get _sidebarText => _isDark ? const Color(0xFFE4E4E7) : Colors.white;
   Color get _sidebarSurface =>
-      _isDark ? const Color(0xFF151923) : const Color(0xFF252836);
+      _isDark ? AppColors.surfaceDarkContainer : AppColors.sidebarRail;
   Color get _sidebarBorder =>
       _isDark ? Colors.white.withValues(alpha: 0.07) : Colors.white.withValues(alpha: 0.12);
   Color get _sidebarMuted =>
@@ -242,20 +248,36 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         query: recipeSearchController.text,
       );
       if (!mounted) return;
-      final items = (payload['items'] as List?)?.cast<Recipe>() ?? const <Recipe>[];
+      final rawItems = payload['items'];
+      final items = rawItems is List<Recipe>
+          ? rawItems
+          : (rawItems is List)
+              ? rawItems.map((e) => e is Recipe ? e : Recipe.fromJson(Map<String, dynamic>.from(e as Map))).toList()
+              : const <Recipe>[];
       final current = (payload['current_page'] as int?) ?? page;
       final last = (payload['last_page'] as int?) ?? 1;
       final total = (payload['total'] as int?) ?? items.length;
+      final q = recipeSearchController.text.trim();
       setState(() {
         recipes = items;
         _recipesPage = current - 1;
         _recipesLastPage = last < 1 ? 1 : last;
         totalRecipes = total;
+        if (q.isEmpty) {
+          _catalogRecipeTotal = total;
+        }
       });
     } catch (e) {
       debugPrint('load recipes page: $e');
       if (!silent && mounted) _showSnackBar("Failed to load recipes.", isError: true);
     }
+  }
+
+  Future<void> _clearRecipeSearch() async {
+    if (recipeSearchController.text.trim().isEmpty) return;
+    recipeSearchController.clear();
+    setState(() {});
+    await _loadRecipesPage(resetToFirstPage: true);
   }
 
   /// Loads each analytics endpoint on its own. A single failure no longer clears the whole dashboard.
@@ -265,6 +287,8 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     Map<String, dynamic>? nextActivityStats;
     List<dynamic>? nextIngredientUsage;
     List<dynamic>? nextActivityLogs;
+    int? nextActivityLastPage;
+    int? nextActivityTotal;
 
     await Future.wait<void>([
       () async {
@@ -300,7 +324,13 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       }(),
       () async {
         try {
-          nextActivityLogs = await ApiService.fetchActivityLogs(_activityPage);
+          final activityPage = await ApiService.fetchActivityLogsPage(
+            _activityPage,
+            perPage: _kActivityPerPage,
+          );
+          nextActivityLogs = List<dynamic>.from(activityPage['items'] as List);
+          nextActivityLastPage = activityPage['last_page'] as int? ?? 1;
+          nextActivityTotal = activityPage['total'] as int? ?? 0;
         } catch (e) {
           debugPrint('activity logs: $e');
         }
@@ -315,7 +345,12 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
       if (nextIngredientUsage != null) ingredientUsage = nextIngredientUsage!;
       if (nextActivityLogs != null) {
         activityLogs = nextActivityLogs!;
-        _hasMoreActivity = nextActivityLogs!.length == 10;
+        if (nextActivityLastPage != null) {
+          _activityLastPage = nextActivityLastPage!;
+        }
+        if (nextActivityTotal != null) {
+          _activityTotal = nextActivityTotal!;
+        }
       }
     });
 
@@ -353,30 +388,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         ),
       ),
     );
-  }
-
-  Future<void> loadInitial() async {
-    if (_isLoadingMore || !_hasMoreActivity) return;
-
-    setState(() => _isLoadingMore = true);
-
-    _activityPage++;
-
-    try {
-      final newLogs = await ApiService.fetchActivityLogs(_activityPage);
-
-      setState(() {
-        activityLogs.addAll(newLogs);
-
-        if (newLogs.length < 10) {
-          _hasMoreActivity = false;
-        }
-
-        _isLoadingMore = false;
-      });
-    } catch (e) {
-      setState(() => _isLoadingMore = false);
-    }
   }
 
   // --- EXPORT LOGIC ---
@@ -536,7 +547,9 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
             r.id.toString(),
             r.name,
             r.category ?? 'Uncategorized',
-            r.rating?.toString() ?? '0.0',
+            r.ratingsCount > 0
+                ? '${r.rating?.toStringAsFixed(1) ?? '0.0'} (${r.ratingsCount})'
+                : r.rating?.toString() ?? '0.0',
             r.instructions,
           ],
         )
@@ -866,6 +879,131 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     return name.contains(query) || email.contains(query);
   }
 
+  static const double _tableActionsColWidth = 88;
+
+  /// Stretches [DataTable] to the panel width so headers/dividers reach the border.
+  Widget _buildEdgeToEdgeDataTable({
+    required List<DataColumn> columns,
+    required List<DataRow> rows,
+    required double rowHeight,
+    required double horizontalMargin,
+    required double minColumnSpacing,
+    required List<double> columnMinWidths,
+  }) {
+    assert(columns.length == columnMinWidths.length);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tableWidth = constraints.maxWidth > 0
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final columnCount = columns.length;
+        final fixedSum = columnMinWidths.fold<double>(0, (a, b) => a + b);
+        final margins = horizontalMargin * 2;
+        final spacingSlots = columnCount > 1 ? columnCount - 1 : 1;
+        var spacing = minColumnSpacing;
+        final contentMin = fixedSum + margins + spacing * spacingSlots;
+        if (contentMin < tableWidth) {
+          spacing = ((tableWidth - fixedSum - margins) / spacingSlots)
+              .clamp(minColumnSpacing, 140.0);
+        }
+
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: tableWidth),
+            child: SizedBox(
+              width: tableWidth,
+              child: DataTable(
+                headingRowColor: WidgetStateProperty.all(
+                  _isDark ? _pageBg : bgSoft.withValues(alpha: 0.5),
+                ),
+                headingTextStyle: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: _mutedText,
+                  fontSize: 12,
+                  letterSpacing: 0.5,
+                ),
+                dataTextStyle: TextStyle(
+                  color: _mainText,
+                  fontWeight: FontWeight.w600,
+                ),
+                dataRowMinHeight: rowHeight,
+                dataRowMaxHeight: rowHeight,
+                horizontalMargin: horizontalMargin,
+                columnSpacing: spacing,
+                dividerThickness: 1,
+                columns: columns,
+                rows: rows,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  DataColumn _actionsHeaderColumn() {
+    return DataColumn(
+      label: SizedBox(
+        width: _tableActionsColWidth,
+        child: Center(
+          child: Text(
+            'ACTIONS',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: _mutedText,
+              fontSize: 12,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tableActionsCell({
+    required VoidCallback onEdit,
+    required VoidCallback onDelete,
+    required String editTooltip,
+    required String deleteTooltip,
+  }) {
+    return SizedBox(
+      width: _tableActionsColWidth,
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(
+                Icons.edit_outlined,
+                size: 20,
+                color: infoBlue,
+              ),
+              tooltip: editTooltip,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              onPressed: onEdit,
+            ),
+            IconButton(
+              icon: const Icon(
+                Icons.delete_outline,
+                size: 20,
+                color: dangerRed,
+              ),
+              tooltip: deleteTooltip,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              onPressed: onDelete,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // --- FULL DIRECTORY VIEWS ---
   Widget _buildFullUsersView() {
     final visibleUsers = users;
@@ -886,6 +1024,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     final userTableHorizontalMargin = compactUserTable ? 16.0 : 32.0;
     final userTableColumnSpacing = compactUserTable ? 18.0 : 34.0;
     final userRowHeight = compactUserTable ? 66.0 : 70.0;
+    final userColWidths = <double>[
+      56,
+      userNameMaxWidth + 52,
+      userEmailMaxWidth,
+      96,
+      joinedDateMaxWidth,
+      _tableActionsColWidth,
+    ];
 
     final panelOuterPad = screenW < 900 ? 16.0 : 40.0;
     final headerInnerPad = screenW < 900 ? 20.0 : 32.0;
@@ -1068,36 +1214,20 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               ),
             ),
             Divider(height: 1, color: _panelBorder),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                headingRowColor: WidgetStateProperty.all(
-                  _isDark ? _pageBg : bgSoft.withOpacity(0.5),
-                ),
-                headingTextStyle: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: _mutedText,
-                  fontSize: 12,
-                  letterSpacing: 0.5,
-                ),
-                dataTextStyle: TextStyle(
-                  color: _mainText,
-                  fontWeight: FontWeight.w600,
-                ),
-                dataRowMinHeight: userRowHeight,
-                dataRowMaxHeight: userRowHeight,
-                horizontalMargin: userTableHorizontalMargin,
-                columnSpacing: userTableColumnSpacing,
-                dividerThickness: 1,
-                columns: const [
-                  DataColumn(label: Text('ID')),
-                  DataColumn(label: Text('USER')),
-                  DataColumn(label: Text('EMAIL')),
-                  DataColumn(label: Text('ROLE')),
-                  DataColumn(label: Text('JOINED DATE')),
-                  DataColumn(label: Text('ACTIONS')),
-                ],
-                rows: visibleUsers.map((u) {
+            _buildEdgeToEdgeDataTable(
+              rowHeight: userRowHeight,
+              horizontalMargin: userTableHorizontalMargin,
+              minColumnSpacing: userTableColumnSpacing,
+              columnMinWidths: userColWidths,
+              columns: [
+                const DataColumn(label: Text('ID')),
+                const DataColumn(label: Text('USER')),
+                const DataColumn(label: Text('EMAIL')),
+                const DataColumn(label: Text('ROLE')),
+                const DataColumn(label: Text('JOINED DATE')),
+                _actionsHeaderColumn(),
+              ],
+              rows: visibleUsers.map((u) {
                   final role = u['role']?.toString().toLowerCase() ?? 'user';
                   final isAdmin = role == 'admin';
                   return DataRow(
@@ -1203,44 +1333,16 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         ),
                       ),
                       DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(
-                                Icons.edit_outlined,
-                                size: 20,
-                                color: infoBlue,
-                              ),
-                              tooltip: "Edit User",
-                              visualDensity: VisualDensity.compact,
-                              constraints: const BoxConstraints(
-                                minWidth: 34,
-                                minHeight: 34,
-                              ),
-                              onPressed: () => showEditUserDialog(u),
-                            ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                size: 20,
-                                color: dangerRed,
-                              ),
-                              tooltip: "Remove User",
-                              visualDensity: VisualDensity.compact,
-                              constraints: const BoxConstraints(
-                                minWidth: 34,
-                                minHeight: 34,
-                              ),
-                              onPressed: () => deleteUser(u['id']),
-                            ),
-                          ],
+                        _tableActionsCell(
+                          editTooltip: 'Edit User',
+                          deleteTooltip: 'Remove User',
+                          onEdit: () => showEditUserDialog(u),
+                          onDelete: () => deleteUser(u['id']),
                         ),
                       ),
                     ],
                   );
                 }).toList(growable: false),
-              ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
@@ -1275,7 +1377,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
   Widget _buildStandardPaginationBar({
     required String summary,
-    required String pageLabel,
+    String? pageLabel,
     int? currentPage,
     int? totalPages,
     ValueChanged<int>? onJumpToPage,
@@ -1286,128 +1388,118 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     String? actionLabel,
     VoidCallback? onAction,
     bool actionLoading = false,
+    bool showFullPageList = true,
   }) {
+    final page = (currentPage ?? 1).clamp(1, 999999);
+    final resolvedTotal = totalPages == null
+        ? (canGoNext ? page + 1 : page).clamp(1, 999999)
+        : totalPages!.clamp(1, 999999);
+
+    void goToPage(int target) {
+      if (onJumpToPage != null) {
+        onJumpToPage(target);
+        return;
+      }
+      if (target < page && onPrev != null) {
+        onPrev();
+      } else if (target > page && onNext != null) {
+        onNext();
+      }
+    }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: _pageBg,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _panelBorder),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: Text(
-              summary,
-              style: TextStyle(
-                color: _mutedText,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-          ),
           if (actionLabel != null && onAction != null) ...[
-            ElevatedButton(
-              onPressed: actionLoading ? null : onAction,
-              style: ElevatedButton.styleFrom(
-                elevation: 0,
-                backgroundColor: primaryBrand,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton(
+                onPressed: actionLoading ? null : onAction,
+                style: ElevatedButton.styleFrom(
+                  elevation: 0,
+                  backgroundColor: primaryBrand,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
-              ),
-              child: Text(
-                actionLoading ? '…' : actionLabel,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-            const SizedBox(width: 10),
-          ],
-          if (onJumpToPage != null &&
-              currentPage != null &&
-              ((totalPages == null) || totalPages > 1)) ...[
-            OutlinedButton.icon(
-              onPressed: () =>
-                  _showPageJumpDialog(currentPage, totalPages, onJumpToPage),
-              icon: const Icon(Icons.swap_horiz_rounded, size: 16),
-              label: const Text("Jump"),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _mainText,
-                side: BorderSide(color: _panelBorder),
-                backgroundColor: _panelBg,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+                child: Text(
+                  actionLoading ? '…' : actionLabel,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(height: 10),
           ],
-          _pagerIcon(
-            icon: Icons.chevron_left_rounded,
-            enabled: canGoPrev,
-            onTap: onPrev,
-          ),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: _panelBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _panelBorder),
-            ),
-            child: Text(
-              pageLabel,
-              style: TextStyle(
-                color: _mainText,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
-            ),
-          ),
-          _pagerIcon(
-            icon: Icons.chevron_right_rounded,
-            enabled: canGoNext,
-            onTap: onNext,
+          AppPaginationBar(
+            summary: summary,
+            currentPage: page,
+            totalPages: resolvedTotal,
+            onPageChanged: goToPage,
+            accentColor: primaryBrand,
+            textColor: _mutedText,
+            showFullPageList: totalPages != null
+                ? totalPages > 1
+                : showFullPageList && resolvedTotal > 1,
+            showLast: resolvedTotal > 1,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildModalLoadMoreButton({
-    required bool isLoading,
-    required VoidCallback onPressed,
+  /// Infinite scroll inside admin full-view modals (10 rows per fetch).
+  Widget _buildModalInfiniteList({
+    required ScrollController scrollController,
+    required bool isLoadingMore,
+    required bool hasMore,
+    required int itemCount,
+    required IndexedWidgetBuilder itemBuilder,
+    required VoidCallback onLoadMore,
   }) {
-    return ElevatedButton.icon(
-      onPressed: isLoading ? null : onPressed,
-      icon: const Icon(Icons.expand_more_rounded, size: 18),
-      label: Text(
-        isLoading ? "Loading..." : "Load More",
-        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-      ),
-      style: ElevatedButton.styleFrom(
-        elevation: 0,
-        backgroundColor: primaryBrand,
-        foregroundColor: Colors.white,
-        disabledBackgroundColor: primaryBrand.withValues(alpha: 0.55),
-        disabledForegroundColor: Colors.white,
-        minimumSize: const Size(140, 48),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
-  }
-
-  Widget _buildModalEndText(String text) {
-    return Text(
-      text,
-      style: TextStyle(
-        color: _mutedText,
-        fontWeight: FontWeight.w700,
-        fontSize: 13,
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (isLoadingMore || !hasMore) return false;
+        final metrics = notification.metrics;
+        if (metrics.maxScrollExtent <= 0) {
+          onLoadMore();
+          return false;
+        }
+        if (metrics.pixels >= metrics.maxScrollExtent - 120) {
+          onLoadMore();
+        }
+        return false;
+      },
+      child: ListView.builder(
+        controller: scrollController,
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        itemCount: itemCount + (isLoadingMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index < itemCount) {
+            return itemBuilder(context, index);
+          }
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: primaryBrand,
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -1448,102 +1540,10 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     );
   }
 
-  Future<void> _showPageJumpDialog(
-    int currentPage,
-    int? totalPages,
-    ValueChanged<int> onJumpToPage,
-  ) async {
-    final controller = TextEditingController(text: currentPage.toString());
-    final selected = await showDialog<int>(
-      context: context,
-      builder: (ctx) {
-        final hint = totalPages == null
-            ? "Enter a page number (1+)"
-            : "Enter a page number (1-$totalPages)";
-        return AlertDialog(
-          backgroundColor: _panelBg,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(
-            "Jump to page",
-            style: TextStyle(color: _mainText, fontWeight: FontWeight.w900),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                hint,
-                style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  hintText: "Page",
-                  filled: true,
-                  fillColor: _pageBg,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: _panelBorder),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text("Cancel", style: TextStyle(color: _mutedText)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final parsed = int.tryParse(controller.text.trim());
-                if (parsed == null || parsed < 1) {
-                  return;
-                }
-                if (totalPages != null && parsed > totalPages) {
-                  return;
-                }
-                Navigator.pop(ctx, parsed);
-              },
-              child: const Text("Go"),
-            ),
-          ],
-        );
-      },
-    );
-    controller.dispose();
-    if (selected == null) return;
-    onJumpToPage(selected);
-  }
-
-  Widget _pagerIcon({
-    required IconData icon,
-    required bool enabled,
-    required VoidCallback? onTap,
-  }) {
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: enabled ? _panelBg : _pageBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: _panelBorder),
-        ),
-        child: Icon(
-          icon,
-          size: 18,
-          color: enabled ? _mainText : _mutedText,
-        ),
-      ),
-    );
-  }
-
   Widget _buildFullRecipesView() {
     final visibleRecipes = recipes;
+    final recipeQuery = recipeSearchController.text.trim();
+    final isRecipeSearchActive = recipeQuery.isNotEmpty;
     final recipeTotalPages = _recipesLastPage < 1 ? 1 : _recipesLastPage;
     final safeRecipesPage = _recipesPage >= recipeTotalPages
         ? recipeTotalPages - 1
@@ -1565,6 +1565,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     final recipeTableColumnSpacing = compactRecipeTable ? 18.0 : 34.0;
     final recipeRowHeight = compactRecipeTable ? 72.0 : 76.0;
     final recipeThumbSize = compactRecipeTable ? 40.0 : 48.0;
+    final recipeColWidths = <double>[
+      56,
+      recipeThumbSize + 16 + dishNameMaxWidth,
+      112,
+      140,
+      instructionsColWidth,
+      _tableActionsColWidth,
+    ];
 
     final panelOuterPad = screenW < 900 ? 16.0 : 40.0;
     final headerInnerPad = screenW < 900 ? 20.0 : 32.0;
@@ -1610,15 +1618,25 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                   final searchField = TextField(
                     controller: recipeSearchController,
                     onChanged: (_) {
+                      setState(() {});
                       _recipeSearchDebounce?.cancel();
                       _recipeSearchDebounce =
                           Timer(const Duration(milliseconds: 260), () {
                         unawaited(_loadRecipesPage(resetToFirstPage: true));
                       });
                     },
+                    onSubmitted: (_) =>
+                        unawaited(_loadRecipesPage(resetToFirstPage: true)),
                     decoration: InputDecoration(
-                      hintText: "Search dish or category...",
+                      hintText: "Search dish, category, or instructions...",
                       prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: isRecipeSearchActive
+                          ? IconButton(
+                              tooltip: 'Clear search and show all recipes',
+                              icon: const Icon(Icons.clear_rounded, size: 20),
+                              onPressed: () => unawaited(_clearRecipeSearch()),
+                            )
+                          : null,
                       filled: true,
                       fillColor: _pageBg,
                       border: OutlineInputBorder(
@@ -1702,38 +1720,26 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               ),
             ),
             Divider(height: 1, color: _panelBorder),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                headingRowColor: WidgetStateProperty.all(
-                  _isDark ? _pageBg : bgSoft.withOpacity(0.5),
-                ),
-                headingTextStyle: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: _mutedText,
-                  fontSize: 12,
-                  letterSpacing: 0.5,
-                ),
-                dataTextStyle: TextStyle(
-                  color: _mainText,
-                  fontWeight: FontWeight.w600,
-                ),
-                dataRowMinHeight: recipeRowHeight,
-                dataRowMaxHeight: recipeRowHeight,
-                horizontalMargin: recipeTableHorizontalMargin,
-                columnSpacing: recipeTableColumnSpacing,
-                dividerThickness: 1,
-                columns: const [
-                  DataColumn(label: Text('ID')),
-                  DataColumn(label: Text('DISH')),
-                  DataColumn(label: Text('CATEGORY')),
-                  DataColumn(label: Text('RATING')),
-                  DataColumn(label: Text('INSTRUCTIONS SUMMARY')),
-                  DataColumn(label: Text('ACTIONS')),
-                ],
-                rows: visibleRecipes.map((r) {
+            _buildEdgeToEdgeDataTable(
+              rowHeight: recipeRowHeight,
+              horizontalMargin: recipeTableHorizontalMargin,
+              minColumnSpacing: recipeTableColumnSpacing,
+              columnMinWidths: recipeColWidths,
+              columns: [
+                const DataColumn(label: Text('ID')),
+                const DataColumn(label: Text('DISH')),
+                const DataColumn(label: Text('CATEGORY')),
+                const DataColumn(label: Text('RATING')),
+                const DataColumn(label: Text('INSTRUCTIONS SUMMARY')),
+                _actionsHeaderColumn(),
+              ],
+              rows: visibleRecipes.map((r) {
                   final categoryStr = r.category ?? 'Uncategorized';
-                  final ratingsStr = r.rating?.toString() ?? 'No Rating';
+                  final ratingsStr = (r.ratingsCount > 0 && r.rating != null)
+                      ? '${r.rating!.toStringAsFixed(1)} (${r.ratingsCount})'
+                      : (r.rating != null && r.rating! > 0)
+                          ? r.rating!.toStringAsFixed(1)
+                          : 'No ratings yet';
                   return DataRow(
                     cells: [
                       DataCell(
@@ -1840,56 +1846,39 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                         ),
                       ),
                       DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(
-                                Icons.edit_outlined,
-                                size: 20,
-                                color: infoBlue,
+                        _tableActionsCell(
+                          editTooltip: 'Edit Recipe',
+                          deleteTooltip: 'Delete Recipe',
+                          onEdit: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => RecipeFormScreen(
+                                recipeId: r.id,
+                                recipe: r,
                               ),
-                              tooltip: "Edit Recipe",
-                              visualDensity: VisualDensity.compact,
-                              constraints: const BoxConstraints(
-                                minWidth: 34,
-                                minHeight: 34,
-                              ),
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => RecipeFormScreen(recipe: r),
-                                ),
-                              ).then((_) => loadData()),
                             ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                size: 20,
-                                color: dangerRed,
-                              ),
-                              tooltip: "Delete Recipe",
-                              visualDensity: VisualDensity.compact,
-                              constraints: const BoxConstraints(
-                                minWidth: 34,
-                                minHeight: 34,
-                              ),
-                              onPressed: () => deleteRecipe(r.id),
-                            ),
-                          ],
+                          ).then((saved) {
+                            if (saved == true) {
+                              unawaited(_loadRecipesPage(silent: true));
+                            }
+                          }),
+                          onDelete: () => deleteRecipe(r.id),
                         ),
                       ),
                     ],
                   );
                 }).toList(growable: false),
-              ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
               child: _buildStandardPaginationBar(
                 summary: visibleRecipes.isEmpty
-                    ? "No recipes"
-                    : "Showing $recipeStart-$recipeEnd of $totalRecipes",
+                    ? (isRecipeSearchActive
+                        ? "No matches for \"$recipeQuery\""
+                        : "No recipes")
+                    : isRecipeSearchActive && _catalogRecipeTotal > 0
+                        ? "Showing $recipeStart-$recipeEnd of $totalRecipes matches (catalog: $_catalogRecipeTotal)"
+                        : "Showing $recipeStart-$recipeEnd of $totalRecipes",
                 pageLabel: "${safeRecipesPage + 1}/$recipeTotalPages",
                 currentPage: safeRecipesPage + 1,
                 totalPages: recipeTotalPages,
@@ -2393,8 +2382,32 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }
 
   // --- UPGRADED CHARTS ---
+  List<CategoryStat> _mergedCategoryDistribution() {
+    if (adminStats == null) return const [];
+    final merged = <String, CategoryStat>{};
+    for (final row in adminStats!.categoryDistribution) {
+      var label = row.category.trim();
+      if (label.isEmpty) label = 'Uncategorized';
+      if (label.toLowerCase() == 'snacks') label = 'Snack';
+      final key = label.toLowerCase();
+      final existing = merged[key];
+      if (existing == null) {
+        merged[key] = CategoryStat(category: label, count: row.count);
+      } else {
+        merged[key] = CategoryStat(
+          category: existing.category,
+          count: existing.count + row.count,
+        );
+      }
+    }
+    final list = merged.values.toList()
+      ..sort((a, b) => b.count.compareTo(a.count));
+    return list;
+  }
+
   Widget _buildCategoryPieChart() {
-    if (adminStats == null || adminStats!.categoryDistribution.isEmpty) {
+    final distribution = _mergedCategoryDistribution();
+    if (distribution.isEmpty) {
       return _buildEmptyState("No distribution data.", Icons.pie_chart_outline);
     }
 
@@ -2404,7 +2417,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         PieChartData(
           sectionsSpace: 4,
           centerSpaceRadius: 60,
-          sections: adminStats!.categoryDistribution.asMap().entries.map((
+          sections: distribution.asMap().entries.map((
             entry,
           ) {
             final color = Colors.primaries[entry.key % Colors.primaries.length];
@@ -2860,13 +2873,14 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         if (limit == null) ...[
           const SizedBox(height: 10),
           _buildStandardPaginationBar(
-            summary: "Loaded ${activityLogs.length} activity rows",
-            pageLabel: "$_activityPage/${_hasMoreActivity ? '?' : _activityPage}",
+            summary: _activityTotal > 0
+                ? "Showing ${activityLogs.length} of $_activityTotal activity rows"
+                : "Loaded ${activityLogs.length} activity rows",
             currentPage: _activityPage,
-            totalPages: null,
+            totalPages: _activityLastPage,
             onJumpToPage: (page) => unawaited(_goToActivityPage(page)),
             canGoPrev: _activityPage > 1,
-            canGoNext: _hasMoreActivity,
+            canGoNext: _activityPage < _activityLastPage,
             onPrev: () => unawaited(_goToActivityPage(_activityPage - 1)),
             onNext: () => unawaited(_goToActivityPage(_activityPage + 1)),
           ),
@@ -2876,6 +2890,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }
 
   void _openActivityModal() {
+    final scrollController = ScrollController();
     int page = 1;
     List<dynamic> modalLogs = [];
     bool isLoading = true;
@@ -2890,39 +2905,46 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             Future<void> loadInitial() async {
-              final logs = await ApiService.fetchActivityLogs(
+              final r = await ApiService.fetchActivityLogsPage(
                 page,
                 date: selectedDate,
                 month: selectedMonth,
+                perPage: _kActivityPerPage,
               );
+              final logs = List<dynamic>.from(r['items'] as List);
+              final lastPage = r['last_page'] as int? ?? 1;
 
               setModalState(() {
                 modalLogs = logs;
                 isLoading = false;
-                hasMore = logs.length == 10;
+                hasMore = page < lastPage;
               });
+              if (scrollController.hasClients) {
+                scrollController.jumpTo(0);
+              }
             }
 
             Future<void> loadMore() async {
-              if (isLoadingMore || !hasMore) return;
+              if (isLoadingMore || !hasMore || isLoading) return;
 
               setModalState(() => isLoadingMore = true);
 
-              page++;
+              final nextPage = page + 1;
 
-              final newLogs = await ApiService.fetchActivityLogs(
-                page,
+              final r = await ApiService.fetchActivityLogsPage(
+                nextPage,
                 date: selectedDate,
                 month: selectedMonth,
+                perPage: _kActivityPerPage,
               );
+              final newLogs = List<dynamic>.from(r['items'] as List);
+              final lastPage = r['last_page'] as int? ?? nextPage;
 
               setModalState(() {
+                page = nextPage;
                 modalLogs.addAll(newLogs);
                 isLoadingMore = false;
-
-                if (newLogs.length < 10) {
-                  hasMore = false;
-                }
+                hasMore = page < lastPage;
               });
             }
 
@@ -3119,16 +3141,19 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
 
                           Expanded(
                             child: Container(
-                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
                               decoration: BoxDecoration(
                                 color: _pageBg.withOpacity(0.6),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(color: _panelBorder),
                               ),
-                              child: ListView.builder(
+                              child: _buildModalInfiniteList(
+                                scrollController: scrollController,
+                                isLoadingMore: isLoadingMore,
+                                hasMore: hasMore,
                                 itemCount: modalLogs.length,
+                                onLoadMore: () => unawaited(loadMore()),
                                 itemBuilder: (context, index) {
-                                  bool isLast = index == modalLogs.length - 1;
+                                  final isLast = index == modalLogs.length - 1;
                                   return _buildTimelineTile(
                                     modalLogs[index],
                                     isLast,
@@ -3137,16 +3162,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                               ),
                             ),
                           ),
-
-                          const SizedBox(height: 12),
-
-                          if (hasMore)
-                            _buildModalLoadMoreButton(
-                              isLoading: isLoadingMore,
-                              onPressed: loadMore,
-                            )
-                          else
-                            _buildModalEndText("No more activities"),
                         ],
                       ),
               ),
@@ -3159,10 +3174,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
           },
         );
       },
-    );
+    ).then((_) => scrollController.dispose());
   }
 
   void _openApiUsageModal() {
+    final scrollController = ScrollController();
     int page = 1;
     List<dynamic> modalRows = [];
     bool isLoading = true;
@@ -3204,17 +3220,25 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 perPage: _kApiUsagePerPage,
               );
               final items = List<dynamic>.from(r['items'] as List? ?? []);
+              final meta = r['meta'] is Map
+                  ? Map<String, dynamic>.from(r['meta'] as Map)
+                  : <String, dynamic>{};
+              final lastPage =
+                  int.tryParse('${meta['last_page']}') ?? page;
               setModalState(() {
                 modalRows = items;
                 isLoading = false;
-                hasMore = items.length == _kApiUsagePerPage;
+                hasMore = page < lastPage;
               });
+              if (scrollController.hasClients) {
+                scrollController.jumpTo(0);
+              }
             }
 
             Future<void> loadMore() async {
-              if (isLoadingMore || !hasMore) return;
+              if (isLoadingMore || !hasMore || isLoading) return;
               setModalState(() => isLoadingMore = true);
-              page++;
+              final nextPage = page + 1;
               String? startDate;
               String? endDate;
               if (selectedDate != null) {
@@ -3238,13 +3262,19 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               final r = await ApiService.fetchApiUsagePaginated(
                 startDate: startDate,
                 endDate: endDate,
-                page: page,
+                page: nextPage,
                 perPage: _kApiUsagePerPage,
               );
               final newItems = List<dynamic>.from(r['items'] as List? ?? []);
+              final meta = r['meta'] is Map
+                  ? Map<String, dynamic>.from(r['meta'] as Map)
+                  : <String, dynamic>{};
+              final lastPage =
+                  int.tryParse('${meta['last_page']}') ?? nextPage;
               setModalState(() {
+                page = nextPage;
                 modalRows.addAll(newItems);
-                hasMore = newItems.length == _kApiUsagePerPage;
+                hasMore = page < lastPage;
                 isLoadingMore = false;
               });
             }
@@ -3447,14 +3477,17 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           const SizedBox(height: 12),
                           Expanded(
                             child: Container(
-                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
                               decoration: BoxDecoration(
                                 color: _pageBg.withValues(alpha: 0.6),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(color: _panelBorder),
                               ),
-                              child: ListView.builder(
+                              child: _buildModalInfiniteList(
+                                scrollController: scrollController,
+                                isLoadingMore: isLoadingMore,
+                                hasMore: hasMore,
                                 itemCount: modalRows.length,
+                                onLoadMore: () => unawaited(loadMore()),
                                 itemBuilder: (context, index) {
                                   final log = modalRows[index];
                                   final latency = double.tryParse(
@@ -3514,14 +3547,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          if (hasMore)
-                            _buildModalLoadMoreButton(
-                              isLoading: isLoadingMore,
-                              onPressed: loadMore,
-                            )
-                          else
-                            _buildModalEndText("No more API traffic logs"),
                         ],
                       ),
               ),
@@ -3534,10 +3559,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
           },
         );
       },
-    );
+    ).then((_) => scrollController.dispose());
   }
 
   void _openSystemHealthModal() {
+    final scrollController = ScrollController();
     int page = 1;
     List<dynamic> modalRows = [];
     bool isLoading = true;
@@ -3579,17 +3605,25 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 perPage: _kErrorLogsPerPage,
               );
               final items = List<dynamic>.from(r['items'] as List? ?? []);
+              final meta = r['meta'] is Map
+                  ? Map<String, dynamic>.from(r['meta'] as Map)
+                  : <String, dynamic>{};
+              final lastPage =
+                  int.tryParse('${meta['last_page']}') ?? page;
               setModalState(() {
                 modalRows = items;
                 isLoading = false;
-                hasMore = items.length == _kErrorLogsPerPage;
+                hasMore = page < lastPage;
               });
+              if (scrollController.hasClients) {
+                scrollController.jumpTo(0);
+              }
             }
 
             Future<void> loadMore() async {
-              if (isLoadingMore || !hasMore) return;
+              if (isLoadingMore || !hasMore || isLoading) return;
               setModalState(() => isLoadingMore = true);
-              page++;
+              final nextPage = page + 1;
               String? startDate;
               String? endDate;
               if (selectedDate != null) {
@@ -3613,13 +3647,19 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               final r = await ApiService.fetchErrorLogsPaginated(
                 startDate: startDate,
                 endDate: endDate,
-                page: page,
+                page: nextPage,
                 perPage: _kErrorLogsPerPage,
               );
               final newItems = List<dynamic>.from(r['items'] as List? ?? []);
+              final meta = r['meta'] is Map
+                  ? Map<String, dynamic>.from(r['meta'] as Map)
+                  : <String, dynamic>{};
+              final lastPage =
+                  int.tryParse('${meta['last_page']}') ?? nextPage;
               setModalState(() {
+                page = nextPage;
                 modalRows.addAll(newItems);
-                hasMore = newItems.length == _kErrorLogsPerPage;
+                hasMore = page < lastPage;
                 isLoadingMore = false;
               });
             }
@@ -3820,14 +3860,17 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           const SizedBox(height: 12),
                           Expanded(
                             child: Container(
-                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
                               decoration: BoxDecoration(
                                 color: _pageBg.withValues(alpha: 0.6),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(color: _panelBorder),
                               ),
-                              child: ListView.builder(
+                              child: _buildModalInfiniteList(
+                                scrollController: scrollController,
+                                isLoadingMore: isLoadingMore,
+                                hasMore: hasMore,
                                 itemCount: modalRows.length,
+                                onLoadMore: () => unawaited(loadMore()),
                                 itemBuilder: (context, index) {
                                   final error = modalRows[index];
                                   return Container(
@@ -3868,14 +3911,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          if (hasMore)
-                            _buildModalLoadMoreButton(
-                              isLoading: isLoadingMore,
-                              onPressed: loadMore,
-                            )
-                          else
-                            _buildModalEndText("No more system health logs"),
                         ],
                       ),
               ),
@@ -3888,10 +3923,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
           },
         );
       },
-    );
+    ).then((_) => scrollController.dispose());
   }
 
   void _openPerformanceModal() {
+    final scrollController = ScrollController();
     int page = 1;
     List<dynamic> modalRows = [];
     bool isLoading = true;
@@ -3933,17 +3969,25 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                 perPage: _kPerformancePerPage,
               );
               final items = List<dynamic>.from(r['items'] as List? ?? []);
+              final meta = r['meta'] is Map
+                  ? Map<String, dynamic>.from(r['meta'] as Map)
+                  : <String, dynamic>{};
+              final lastPage =
+                  int.tryParse('${meta['last_page']}') ?? page;
               setModalState(() {
                 modalRows = items;
                 isLoading = false;
-                hasMore = items.length == _kPerformancePerPage;
+                hasMore = page < lastPage;
               });
+              if (scrollController.hasClients) {
+                scrollController.jumpTo(0);
+              }
             }
 
             Future<void> loadMore() async {
-              if (isLoadingMore || !hasMore) return;
+              if (isLoadingMore || !hasMore || isLoading) return;
               setModalState(() => isLoadingMore = true);
-              page++;
+              final nextPage = page + 1;
               String? startDate;
               String? endDate;
               if (selectedDate != null) {
@@ -3967,13 +4011,19 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
               final r = await ApiService.fetchPerformanceMetricsPaginated(
                 startDate: startDate,
                 endDate: endDate,
-                page: page,
+                page: nextPage,
                 perPage: _kPerformancePerPage,
               );
               final newItems = List<dynamic>.from(r['items'] as List? ?? []);
+              final meta = r['meta'] is Map
+                  ? Map<String, dynamic>.from(r['meta'] as Map)
+                  : <String, dynamic>{};
+              final lastPage =
+                  int.tryParse('${meta['last_page']}') ?? nextPage;
               setModalState(() {
+                page = nextPage;
                 modalRows.addAll(newItems);
-                hasMore = newItems.length == _kPerformancePerPage;
+                hasMore = page < lastPage;
                 isLoadingMore = false;
               });
             }
@@ -4175,14 +4225,17 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           const SizedBox(height: 12),
                           Expanded(
                             child: Container(
-                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
                               decoration: BoxDecoration(
                                 color: _pageBg.withValues(alpha: 0.6),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(color: _panelBorder),
                               ),
-                              child: ListView.builder(
+                              child: _buildModalInfiniteList(
+                                scrollController: scrollController,
+                                isLoadingMore: isLoadingMore,
+                                hasMore: hasMore,
                                 itemCount: modalRows.length,
+                                onLoadMore: () => unawaited(loadMore()),
                                 itemBuilder: (context, index) {
                                   final row = modalRows[index];
                                   final durationMs =
@@ -4223,14 +4276,6 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          if (hasMore)
-                            _buildModalLoadMoreButton(
-                              isLoading: isLoadingMore,
-                              onPressed: loadMore,
-                            )
-                          else
-                            _buildModalEndText("No more performance logs"),
                         ],
                       ),
               ),
@@ -4243,7 +4288,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
           },
         );
       },
-    );
+    ).then((_) => scrollController.dispose());
   }
 
   Widget _buildApiUsageTable() {
@@ -4583,15 +4628,19 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
   }
 
   Future<void> _goToActivityPage(int page) async {
-    if (page < 1) return;
+    if (page < 1 || page > _activityLastPage) return;
     setState(() => _isLoadingMore = true);
     try {
-      final logs = await ApiService.fetchActivityLogs(page);
+      final r = await ApiService.fetchActivityLogsPage(
+        page,
+        perPage: _kActivityPerPage,
+      );
       if (!mounted) return;
       setState(() {
-        _activityPage = page;
-        activityLogs = logs;
-        _hasMoreActivity = logs.length == 10;
+        _activityPage = r['current_page'] as int? ?? page;
+        _activityLastPage = r['last_page'] as int? ?? 1;
+        _activityTotal = r['total'] as int? ?? 0;
+        activityLogs = List<dynamic>.from(r['items'] as List);
         _isLoadingMore = false;
       });
     } catch (_) {
@@ -5503,7 +5552,7 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
     return Container(
       width: 284,
       decoration: BoxDecoration(
-        color: _isDark ? _sidebarBg.withValues(alpha: 0.92) : const Color(0xFF222534),
+        color: _isDark ? _sidebarBg.withValues(alpha: 0.92) : AppColors.sidebarRail,
       ),
       child: Column(
         children: [
@@ -5645,7 +5694,11 @@ class _AdminRecipesScreenState extends State<AdminRecipesScreen> {
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(builder: (_) => const RecipeFormScreen()),
-                          ).then((_) => _refreshCoreDataInBackground()),
+                          ).then((saved) {
+                            if (saved == true) {
+                              unawaited(_loadRecipesPage(resetToFirstPage: true, silent: true));
+                            }
+                          }),
                         ),
                       ],
                     ),

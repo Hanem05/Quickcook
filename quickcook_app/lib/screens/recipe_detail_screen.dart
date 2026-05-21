@@ -2,12 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // ✅ ADDED
 
 import '../models/recipe.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../theme/app_colors.dart';
+import '../widgets/recipe_image.dart';
 
 class RecipeDetailScreen extends StatefulWidget {
   final int recipeId;
@@ -31,13 +32,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   Recipe? recipe;
   bool loading = true;
   int? userRating;
+  /// Latest average from POST /rate; avoids stale loads overwriting the header.
+  double? _headerAverage;
+  int? _headerRatingsCount;
+  int _detailLoadSeq = 0;
   bool _isCreatingCollection = false;
   bool _isFavorite = false;
   bool _favoriteBusy = false;
 
   // --- MODERN TEAL & ZINC PALETTE ---
-  static const Color primaryBrand = Color(0xFFC2410C);
-  static const Color warningAmber = Color(0xFFF59E0B);
+  static const Color primaryBrand = AppColors.brand;
+  static const Color warningAmber = AppColors.warningAmber;
 
   @override
   void initState() {
@@ -51,6 +56,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     if (preview != null) {
       recipe = preview;
       userRating = preview.userRating;
+      _headerAverage = preview.rating;
+      _headerRatingsCount = preview.ratingsCount;
       loading = false;
     }
     unawaited(_loadFavoriteState());
@@ -132,12 +139,15 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   }
 
   Future<void> loadRecipe() async {
+    final loadSeq = _detailLoadSeq;
     try {
       final data = await ApiService.fetchRecipeDetail(widget.recipeId);
-      if (!mounted) return;
+      if (!mounted || loadSeq != _detailLoadSeq) return;
       setState(() {
         recipe = data;
         userRating = data.userRating ?? userRating;
+        _headerAverage = data.rating;
+        _headerRatingsCount = data.ratingsCount;
         loading = false;
       });
       unawaited(_loadFavoriteState());
@@ -155,21 +165,57 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
   Future<void> submitRating(int rating) async {
     final previous = userRating;
-    setState(() => userRating = rating);
+    final previousHeaderAvg = _headerAverage;
+    final previousHeaderCount = _headerRatingsCount;
+    _detailLoadSeq++;
+    setState(() {
+      userRating = rating;
+      _headerAverage = rating.toDouble();
+      _headerRatingsCount = (recipe?.ratingsCount ?? 0) > 0
+          ? recipe!.ratingsCount
+          : 1;
+    });
 
     try {
-      await ApiService.rateRecipe(widget.recipeId, rating);
-
-      ApiService.clearCache('recipe_${widget.recipeId}');
-      ApiService.clearCache('recipes_all');
+      final result = await ApiService.rateRecipe(widget.recipeId, rating);
 
       if (!mounted) return;
+      setState(() {
+        _headerAverage = result.average;
+        _headerRatingsCount = result.count;
+        if (recipe != null) {
+          recipe = recipe!.copyWith(
+            rating: result.average,
+            ratingsCount: result.count,
+            userRating: rating,
+          );
+        }
+      });
       _showSnackBar("Thanks for your feedback!");
-      loadRecipe(); // Reload to update average
+
+      try {
+        final data = await ApiService.fetchRecipeDetail(
+          widget.recipeId,
+          forceRefresh: true,
+        );
+        if (!mounted) return;
+        setState(() {
+          recipe = data;
+          userRating = data.userRating ?? rating;
+          _headerAverage = data.rating;
+          _headerRatingsCount = data.ratingsCount;
+        });
+      } catch (_) {
+        // Header already shows POST /rate values.
+      }
     } catch (e) {
       if (!mounted) return;
       _showSnackBar("Failed to submit rating.", isError: true);
-      setState(() => userRating = previous);
+      setState(() {
+        userRating = previous;
+        _headerAverage = previousHeaderAvg;
+        _headerRatingsCount = previousHeaderCount;
+      });
     }
   }
 
@@ -346,7 +392,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         physics: const BouncingScrollPhysics(),
         child: Column(
           children: [
-            _buildRecipeImage(recipe!.imageUrl),
+            _buildRecipeImage(),
             Transform.translate(
               offset: const Offset(0, -32),
               child: Center(
@@ -425,39 +471,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     );
   }
 
-  Widget _buildRecipeImage(String? imageUrl) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
+  Widget _buildRecipeImage() {
+    final r = recipe!;
+    return SizedBox(
       height: 400,
       width: double.infinity,
-      decoration: BoxDecoration(color: cs.surfaceContainerHigh),
-      child: imageUrl != null && imageUrl.isNotEmpty
-          ? CachedNetworkImage(
-              imageUrl: imageUrl,
-              fit: BoxFit.cover,
-              fadeInDuration: const Duration(milliseconds: 220),
-              fadeOutDuration: const Duration(milliseconds: 120),
-              memCacheWidth: 1080,
-              placeholder: (context, url) => Container(
-                color: cs.surfaceContainerLow,
-                alignment: Alignment.center,
-                child: Icon(
-                  Icons.restaurant_menu_rounded,
-                  size: 64,
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-              errorWidget: (context, url, error) => Icon(
-                Icons.restaurant_menu_rounded,
-                size: 80,
-                color: cs.onSurfaceVariant,
-              ),
-            )
-          : Icon(
-              Icons.restaurant_menu_rounded,
-              size: 80,
-              color: cs.onSurfaceVariant,
-            ),
+      child: RecipeImage(
+        recipeId: r.id,
+        imageUrl: r.imageUrl,
+        fit: BoxFit.cover,
+        memCacheWidth: 1080,
+      ),
     );
   }
 
@@ -565,25 +589,50 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
               ),
             ),
           ),
-        _buildAverageRating(recipe!.rating),
+        _buildAverageRating(),
       ],
     );
   }
 
-  Widget _buildAverageRating(double? rating) {
+  Widget _buildAverageRating() {
     final cs = Theme.of(context).colorScheme;
-    return Row(
+    final rating = _headerAverage ?? recipe?.rating;
+    final count = _headerRatingsCount ?? recipe?.ratingsCount ?? 0;
+    final double? displayRating = count > 0 && rating != null
+        ? rating
+        : (userRating != null
+            ? userRating!.toDouble()
+            : (rating != null && rating > 0 ? rating : null));
+    final label = displayRating != null
+        ? displayRating.toStringAsFixed(1)
+        : 'N/A';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        const Icon(Icons.star_rounded, color: warningAmber, size: 22),
-        const SizedBox(width: 6),
-        Text(
-          rating != null ? rating.toStringAsFixed(1) : "N/A",
-          style: TextStyle(
-            fontWeight: FontWeight.w900,
-            fontSize: 18,
-            color: cs.onSurface,
-          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.star_rounded, color: warningAmber, size: 22),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+                color: cs.onSurface,
+              ),
+            ),
+          ],
         ),
+        if (count > 0)
+          Text(
+            'avg · $count ${count == 1 ? 'rating' : 'ratings'}',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: cs.onSurfaceVariant,
+            ),
+          ),
       ],
     );
   }
