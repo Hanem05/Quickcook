@@ -9,8 +9,26 @@ Mobile and web client for QuickCook.
 ```bash
 flutter pub get
 flutter run
-# Physical device on same Wi‑Fi as Docker backend:
-# flutter run --dart-define=API_HOST=192.168.x.x
+```
+
+### Physical phone over USB (no IP entry)
+
+From repo root (with backend on port **8001**):
+
+```powershell
+.\scripts\adb-reverse.ps1
+cd quickcook_app
+flutter run
+```
+
+Or one step: `.\scripts\run-flutter-usb.ps1`
+
+Debug builds use `http://127.0.0.1:8001/api`; `adb reverse` tunnels that to your PC.
+
+### Physical phone on Wi‑Fi (no USB)
+
+```bash
+flutter run --dart-define=API_HOST=192.168.x.x
 ```
 
 ## Build release APK

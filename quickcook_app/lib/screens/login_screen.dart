@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../navigation/app_page_route.dart';
+import '../services/api_host_config.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../widgets/server_connection_fields.dart';
 import '../widgets/modern_ui.dart';
 import '../utils/varchar_limits.dart';
 import '../widgets/terms_acceptance_row.dart';
@@ -25,12 +27,15 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+  final serverHostController = TextEditingController();
+  final serverPortController = TextEditingController(text: '8001');
   bool _acceptedTerms = false;
   bool _loggingIn = false;
 
   @override
   void initState() {
     super.initState();
+    _loadSavedServer();
     final msg = widget.postRegistrationMessage?.trim();
     if (msg != null && msg.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -50,9 +55,42 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
+  Future<void> _loadSavedServer() async {
+    final host = await ApiHostConfig.loadSavedHost();
+    final port = await ApiHostConfig.loadSavedPort();
+    if (!mounted) return;
+    if (host != null && host.isNotEmpty) {
+      serverHostController.text = host;
+    }
+    if (port != null && port.isNotEmpty) {
+      serverPortController.text = port;
+    }
+    setState(() {});
+  }
+
+  Future<bool> _persistServerBeforeAuth() async {
+    if (!ApiHostConfig.needsServerSetup) return true;
+    final host = serverHostController.text.trim();
+    if (host.isEmpty) {
+      AppMessage.show(
+        context,
+        text:
+            'Enter your PC\'s IP address under Server connection (same Wi‑Fi as this phone).',
+        type: AppMessageType.error,
+      );
+      return false;
+    }
+    await ApiHostConfig.applyServerFromFields(
+      host,
+      portInput: serverPortController.text,
+    );
+    return true;
+  }
+
   Future<void> login() async {
     if (!_formKey.currentState!.validate()) return;
     if (_loggingIn) return;
+    if (!await _persistServerBeforeAuth()) return;
 
     setState(() => _loggingIn = true);
 
@@ -90,7 +128,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       AppMessage.show(
         context,
-        text: 'Please accept the Terms & Regulations to sign in.',
+        text: 'Please accept the Terms & Conditions to sign in.',
         type: AppMessageType.error,
       );
       return;
@@ -122,6 +160,8 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     emailController.dispose();
     passwordController.dispose();
+    serverHostController.dispose();
+    serverPortController.dispose();
     super.dispose();
   }
 
@@ -235,6 +275,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
                               const SizedBox(height: 24),
+                              ServerConnectionFields(
+                                hostController: serverHostController,
+                                portController: serverPortController,
+                              ),
                               TextFormField(
                                 controller: emailController,
                                 keyboardType: TextInputType.emailAddress,

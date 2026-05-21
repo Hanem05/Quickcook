@@ -1,7 +1,8 @@
 import 'dart:io' show Platform;
 
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Resolves the Laravel API base URL for emulator, physical device, and web.
@@ -17,11 +18,31 @@ class ApiHostConfig {
     return _resolveSyncFallback();
   }
 
-  static bool get requiresManualHost =>
+  /// USB debugging: use 127.0.0.1 + `adb reverse tcp:8001 tcp:8001` (no Wi‑Fi IP).
+  static bool get usesUsbLocalhost =>
+      kDebugMode &&
       !kIsWeb &&
       defaultTargetPlatform == TargetPlatform.android &&
       isPhysicalAndroid &&
       _savedHost.isEmpty;
+
+  static bool get requiresManualHost =>
+      !kDebugMode &&
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android &&
+      isPhysicalAndroid &&
+      _savedHost.isEmpty;
+
+  /// True when the APK was built without `--dart-define=API_BASE_URL` / `API_HOST`.
+  static bool get hasBuildTimeApiUrl {
+    const base = String.fromEnvironment('API_BASE_URL', defaultValue: '');
+    if (base.trim().isNotEmpty) return true;
+    const host = String.fromEnvironment('API_HOST', defaultValue: '');
+    return host.trim().isNotEmpty;
+  }
+
+  /// Physical Android with no baked-in URL — user must enter server IP on login.
+  static bool get needsServerSetup => !hasBuildTimeApiUrl && requiresManualHost;
 
   static String _savedHost = '';
 
@@ -48,6 +69,58 @@ class ApiHostConfig {
   static Future<String?> loadSavedHost() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_prefHostKey)?.trim();
+  }
+
+  static Future<String?> loadSavedPort() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_prefPortKey)?.trim();
+  }
+
+  /// Parses `192.168.1.5`, `192.168.1.5:8001`, or `http://host:8001/api`.
+  static ({String host, String port}) parseServerInput(
+    String raw, {
+    String defaultPort = '8001',
+  }) {
+    var input = raw.trim();
+    if (input.isEmpty) {
+      return (host: '', port: defaultPort);
+    }
+
+    if (!input.contains('://')) {
+      final slash = input.indexOf('/');
+      if (slash > 0) input = input.substring(0, slash);
+      final colon = input.lastIndexOf(':');
+      if (colon > 0) {
+        final maybePort = input.substring(colon + 1);
+        if (int.tryParse(maybePort) != null) {
+          return (
+            host: input.substring(0, colon).trim(),
+            port: maybePort,
+          );
+        }
+      }
+      return (host: input, port: defaultPort);
+    }
+
+    final uri = Uri.tryParse(input);
+    if (uri == null || uri.host.isEmpty) {
+      return (host: input, port: defaultPort);
+    }
+    final port = uri.hasPort ? uri.port.toString() : defaultPort;
+    return (host: uri.host, port: port);
+  }
+
+  /// Saves host/port from login UI. Returns false when host is empty.
+  static Future<bool> applyServerFromFields(
+    String hostInput, {
+    String portInput = '8001',
+  }) async {
+    final portDefault =
+        portInput.trim().isEmpty ? '8001' : portInput.trim();
+    final parsed = parseServerInput(hostInput, defaultPort: portDefault);
+    if (parsed.host.isEmpty) return false;
+    await saveHost(parsed.host, port: parsed.port);
+    return true;
   }
 
   static Future<String> _resolve() async {
@@ -83,7 +156,11 @@ class ApiHostConfig {
       if (savedHost.isNotEmpty) {
         return _url(savedHost, effectivePort);
       }
-      // Physical phone without saved host — caller must collect IP on login.
+      if (kDebugMode) {
+        // USB debug: `adb reverse tcp:8001 tcp:8001` maps phone localhost → PC :8001
+        return _url('127.0.0.1', effectivePort);
+      }
+      // Release APK on Wi‑Fi: enter PC IP on login, or bake API_BASE_URL at build time.
       return '';
     }
 
@@ -106,6 +183,9 @@ class ApiHostConfig {
     }
     if (_savedHost.isNotEmpty) {
       return _url(_savedHost, _portFromEnvironment());
+    }
+    if (kDebugMode && Platform.isAndroid) {
+      return _url('127.0.0.1', _portFromEnvironment());
     }
     return _url('127.0.0.1', _portFromEnvironment());
   }

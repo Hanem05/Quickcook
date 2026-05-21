@@ -147,9 +147,11 @@ class ApiService {
       }
     } catch (e) {
       await AppLogger.logApiError(endpoint: 'POST /login', error: e);
-      final hint = ApiHostConfig.requiresManualHost
-          ? ' Configure API_HOST when building, or set api_host in app storage.'
-          : '';
+      final hint = ApiHostConfig.needsServerSetup
+          ? ' Enter your PC\'s IP in Server connection (same Wi‑Fi).'
+          : (ApiHostConfig.usesUsbLocalhost
+              ? ' Run: adb reverse tcp:8001 tcp:8001 (USB debug to PC).'
+              : '');
       return {
         "success": false,
         "message": "Cannot connect to server.$hint",

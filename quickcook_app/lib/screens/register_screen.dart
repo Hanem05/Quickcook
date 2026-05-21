@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // <--- ADDED for inputFormatters
+import '../services/api_host_config.dart';
 import '../services/api_service.dart';
 import '../widgets/app_message.dart';
+import '../widgets/server_connection_fields.dart';
 import '../utils/varchar_limits.dart';
 import '../widgets/terms_acceptance_row.dart';
 import 'login_screen.dart';
@@ -19,9 +21,49 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final nameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+  final serverHostController = TextEditingController();
+  final serverPortController = TextEditingController(text: '8001');
 
   bool isLoading = false;
   bool _acceptedTerms = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedServer();
+  }
+
+  Future<void> _loadSavedServer() async {
+    final host = await ApiHostConfig.loadSavedHost();
+    final port = await ApiHostConfig.loadSavedPort();
+    if (!mounted) return;
+    if (host != null && host.isNotEmpty) {
+      serverHostController.text = host;
+    }
+    if (port != null && port.isNotEmpty) {
+      serverPortController.text = port;
+    }
+    setState(() {});
+  }
+
+  Future<bool> _persistServerBeforeAuth() async {
+    if (!ApiHostConfig.needsServerSetup) return true;
+    final host = serverHostController.text.trim();
+    if (host.isEmpty) {
+      AppMessage.show(
+        context,
+        text:
+            'Enter your PC\'s IP address under Server connection (same Wi‑Fi as this phone).',
+        type: AppMessageType.error,
+      );
+      return false;
+    }
+    await ApiHostConfig.applyServerFromFields(
+      host,
+      portInput: serverPortController.text,
+    );
+    return true;
+  }
 
   void register() async {
     if (!_formKey.currentState!.validate()) return;
@@ -29,11 +71,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!_acceptedTerms) {
       AppMessage.show(
         context,
-        text: 'Please accept the Terms & Regulations to create an account.',
+        text: 'Please accept the Terms & Conditions to create an account.',
         type: AppMessageType.error,
       );
       return;
     }
+
+    if (!await _persistServerBeforeAuth()) return;
 
     setState(() => isLoading = true);
 
@@ -200,7 +244,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                               ),
                               const SizedBox(height: 24),
-
+                              ServerConnectionFields(
+                                hostController: serverHostController,
+                                portController: serverPortController,
+                              ),
                               TextFormField(
                                 controller: nameController,
                                 style: TextStyle(

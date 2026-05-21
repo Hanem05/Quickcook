@@ -1,7 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-/// Checkbox row for terms acceptance with a tappable "Terms & Regulations" link.
+/// Checkbox row for terms acceptance with a tappable "Terms & Conditions" link.
 class TermsAcceptanceRow extends StatelessWidget {
   const TermsAcceptanceRow({
     super.key,
@@ -19,7 +19,7 @@ class TermsAcceptanceRow extends StatelessWidget {
     return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Terms & Regulations'),
+        title: const Text('Terms & Conditions'),
         content: SingleChildScrollView(
           child: Text(
             'By using QuickCook you agree to use the app responsibly, keep your '
@@ -77,7 +77,7 @@ class TermsAcceptanceRow extends StatelessWidget {
                 children: [
                   const TextSpan(text: 'I agree to the '),
                   TextSpan(
-                    text: 'Terms & Regulations',
+                    text: 'Terms & Conditions',
                     style: linkStyle,
                     recognizer: TapGestureRecognizer()
                       ..onTap = onViewTerms ?? () => showTermsDialog(context),
